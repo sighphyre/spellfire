@@ -1,0 +1,4 @@
+**/venv
+.openapikey
+**/*.png
+**/__pycache__
