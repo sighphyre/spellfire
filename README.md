@@ -15,3 +15,8 @@ Things I'd kinda like to poke at:
 - Layering prompts and dealing with equivalent layered failures
 
 
+### Development
+
+You'll need to setup a venv and install the requirements with `pip install -r requirements.txt`s
+
+Tests are a bit janky right now but you can run them with `pytest test_**.py -vv`
