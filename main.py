@@ -7,21 +7,7 @@ from random import choice
 
 pygame.init()
 
-# DISPLAYSURF = pygame.display.set_mode((1200, 600), pygame.FULLSCREEN | pygame.DOUBLEBUF)
-
-
-
-# Get the current screen info
-info = pygame.display.Info()
-# Calculate a resolution with a 16:9 aspect ratio
-width = int(info.current_w * 0.8)  # Adjust this multiplier as needed
-height = int((width / 16) * 9.1)
-
-DISPLAYSURF = pygame.display.set_mode((width, height), pygame.FULLSCREEN | pygame.DOUBLEBUF)
-
-
-
-
+DISPLAYSURF = pygame.display.set_mode((640, 480), DOUBLEBUF)
 
 pygame.display.set_caption("Map Rendering Demo")
 FPSCLOCK = pygame.time.Clock()
@@ -60,7 +46,7 @@ class Terrain:
             return self.get_image(choice(range(0, 10)), 0)
         elif tile_type == 1:
             return self.get_image(choice(range(0, 10)), 19)
-        elif tile_type == 2: 
+        elif tile_type == 2:
             return self.get_image(choice(range(2, 10)), 1)
 
 
