@@ -33,11 +33,15 @@ def from_dict(cls, raw_data: dict):
 
 def create_completer(client):
     def complete(cls, params):
+
+        prompt = cls.prompt_descriptor(*params)
+        print("This is mah Prompt: ", prompt)
+
         chat_completion = client.chat.completions.create(
             messages=[
                 {
                     "role": "user",
-                    "content": cls.prompt_descriptor(*params),
+                    "content": prompt,
                 }
             ],
             model="gpt-3.5-turbo-1106",
@@ -55,7 +59,7 @@ class AiAbstractFactory:
     def request_world_object(self, cls, params=None):
         chat_completion = self.completer(cls, params)
 
-        # print("completion", chat_completion)
+        print("completion", chat_completion)
         message_dict = json.loads(chat_completion)
 
         return from_dict(cls, message_dict)
