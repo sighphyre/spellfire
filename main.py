@@ -7,7 +7,7 @@ from random import choice
 
 pygame.init()
 
-DISPLAYSURF = pygame.display.set_mode((640, 480), DOUBLEBUF)
+DISPLAYSURF = pygame.display.set_mode((1280, 900), DOUBLEBUF)
 
 pygame.display.set_caption("Map Rendering Demo")
 FPSCLOCK = pygame.time.Clock()
@@ -43,11 +43,21 @@ class Terrain:
 
     def image_for(self, tile_type):
         if tile_type == 0:
-            return self.get_image(choice(range(0, 10)), 0)
+            return self.get_image(1, 0)
         elif tile_type == 1:
-            return self.get_image(choice(range(0, 10)), 19)
+            return self.get_image(1, 19)
         elif tile_type == 2:
-            return self.get_image(choice(range(2, 10)), 1)
+            return self.get_image(3, 1)
+
+class ViewPort:
+
+    def __init__(self, init_x, init_y):
+        self.x = init_x
+        self.y =  init_y
+
+    def apply_offset(self, x=0, y=0):
+        self.x += x
+        self.y += y
 
 
 map_data = [
@@ -114,30 +124,43 @@ TILEHEIGHT_HALF = TILEHEIGHT / 2
 TILEWIDTH_HALF = TILEWIDTH / 2
 
 terrain = Terrain(terrain_sheet, map_data, TILEWIDTH, TILEHEIGHT_HALF)
+viewport = ViewPort(0, 0)
 
-terrain_rect = (0, 0, TILEWIDTH, TILEHEIGHT_HALF)
-terrain_image = terrain_sheet.image_at(terrain_rect, -1)
 
-for row_nb, row in enumerate(map_data):
-    for col_nb, tile in enumerate(row):
-        tileImage = terrain.image_for(tile)
-        cart_x = row_nb * TILEWIDTH_HALF
-        cart_y = col_nb * TILEHEIGHT_HALF
-        iso_x = cart_x - cart_y
-        iso_y = (cart_x + cart_y) / 2
-        centered_x = DISPLAYSURF.get_rect().centerx + iso_x
-        centered_y = (DISPLAYSURF.get_rect().centery / 2 + iso_y) + -500
-        DISPLAYSURF.blit(tileImage, (centered_x, centered_y))  # display the actual tile
 
 while True:
     for event in pygame.event.get():
         if event.type == QUIT:
             pygame.quit()
             sys.exit()
+        if event.type == KEYDOWN:
+            if event.key == K_UP:
+                viewport.apply_offset(y=50)
+            if event.key == K_DOWN:
+                viewport.apply_offset(y=-50)
+            if event.key == K_LEFT:
+                viewport.apply_offset(x=50)
+            if event.key == K_RIGHT:
+                viewport.apply_offset(x=-50)
         if event.type == KEYUP:
             if event.key == K_ESCAPE:
                 pygame.quit()
                 sys.exit()
+
+    terrain_rect = (0, 0, TILEWIDTH, TILEHEIGHT_HALF)
+    terrain_image = terrain_sheet.image_at(terrain_rect, -1)
+
+    for row_nb, row in enumerate(map_data):
+        for col_nb, tile in enumerate(row):
+            tileImage = terrain.image_for(tile)
+            cart_x = row_nb * TILEWIDTH_HALF
+            cart_y = col_nb * TILEHEIGHT_HALF
+            iso_x = cart_x - cart_y
+            iso_y = (cart_x + cart_y) / 2
+            centered_x = (DISPLAYSURF.get_rect().centerx + iso_x) + viewport.x
+            centered_y = (DISPLAYSURF.get_rect().centery / 2 + iso_y) + viewport.y
+            DISPLAYSURF.blit(tileImage, (centered_x, centered_y))  # display the actual tile
+
 
     pygame.display.flip()
     FPSCLOCK.tick(30)
