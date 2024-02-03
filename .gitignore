@@ -1,6 +1,5 @@
 **/venv
 .openapikey
 **/__pycache__
-**/*.tsx
 **/*.tiled-project
 **/*.tiled-session
