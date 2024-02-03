@@ -4,6 +4,9 @@ from pygame.locals import *
 from spritesheet import SpriteSheet
 import sys
 from random import choice
+import pytmx
+from pytmx import TiledImageLayer, TiledObjectGroup, TiledTileLayer
+from pytmx.util_pygame import load_pygame
 
 pygame.init()
 
