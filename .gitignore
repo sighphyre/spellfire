@@ -3,3 +3,7 @@
 **/__pycache__
 **/*.tiled-project
 **/*.tiled-session
+
+# Added by cargo
+
+/target
