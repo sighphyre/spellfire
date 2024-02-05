@@ -2,7 +2,6 @@ mod entity;
 mod generator;
 
 use bevy::prelude::*;
-use bevy::utils::Uuid;
 use generator::Completer;
 use openai_api_rust::{Auth, OpenAI};
 use std::sync::mpsc;
@@ -10,14 +9,6 @@ use std::sync::mpsc::{Receiver, Sender};
 
 use crate::entity::character::Character;
 use crate::generator::CompletionQuery;
-
-#[derive(Default)]
-struct Player {
-    x: f32,
-    y: f32,
-    speed: f32,
-    direction: Vec2,
-}
 
 #[derive(Default, Debug)]
 enum GameState {
@@ -29,7 +20,6 @@ enum GameState {
 
 #[derive(Default, Resource)]
 struct Game {
-    player: Player,
     game_state: GameState,
     oracle: Option<Oracle>,
 }
@@ -50,26 +40,19 @@ fn default_completer() -> Oracle {
 
     let completer = Completer { client: openai };
 
-    //spawn new thread first for our background processing
+    let (send_ask, receive_ask): (Sender<CompletionQuery>, Receiver<CompletionQuery>) =
+        mpsc::channel();
 
-    let (send_ask, receive_ask): (Sender<CompletionQuery>, Receiver<CompletionQuery>) = mpsc::channel();
-
-    std::thread::spawn(move || {
-        while (true) {
-            let query = receive_ask.recv().unwrap();
-            let character = completer.complete_as::<Character>(query).expect("Ooops?");
-            println!("Got the following response {character:?}");
-        }
+    //spawn new thread first for our background processing, this is a terrible, terrible idea and needs fixing
+    std::thread::spawn(move || loop {
+        let query = receive_ask.recv().unwrap();
+        let character = completer.complete_as::<Character>(query).expect("Ooops?");
+        println!("Got the following response {character:?}");
     });
 
     Oracle {
         completer: send_ask,
     }
-
-    // let input: String = "a beautiful sorceress, dark hair, adept in fire magic".into();
-    // let thing = completer.materialize::<String, Character>(&input);
-
-    // println!("Got the following response {thing:?}");
 }
 
 fn main() {

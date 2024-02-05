@@ -6,23 +6,6 @@ use entity::SelfDescribe;
 
 use crate::entity;
 
-/// use entity::character::Character;
-/// use openai_api_rust::{Auth, OpenAI};
-///
-/// use crate::generator::Completer;
-/// fn main() {
-///     // Load API key from environment OPENAI_API_KEY.
-///     let auth = Auth::from_env().unwrap();
-///     let openai = OpenAI::new(auth, "https://api.openai.com/v1/");
-///
-///     let completer = Completer { client: openai };
-///
-///     let input: String = "a beautiful sorceress, dark hair, adept in fire magic".into();
-///     let thing = completer.materialize::<String, Character>(&input);
-///
-///     println!("Got the following response {thing:?}");
-/// }
-
 pub struct Completer {
     pub client: OpenAI,
 }
