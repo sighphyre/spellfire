@@ -1,92 +1,170 @@
 mod entity;
+mod generator;
 
-use openai_api_rust::chat::*;
-use openai_api_rust::*;
-use serde::de::DeserializeOwned;
+use bevy::prelude::*;
+use bevy::utils::Uuid;
+use generator::Completer;
+use openai_api_rust::{Auth, OpenAI};
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
 
-use entity::character::Character;
-use entity::SelfDescribe;
+use crate::entity::character::Character;
+use crate::generator::CompletionQuery;
 
-struct Completer {
-    client: OpenAI,
+#[derive(Default)]
+struct Player {
+    x: f32,
+    y: f32,
+    speed: f32,
+    direction: Vec2,
 }
 
-#[derive(Debug)]
-enum AiError {
-    OpenAIError(String),
-    SerdeError(String),
+#[derive(Default, Debug)]
+enum GameState {
+    #[default]
+    Loading,
+    Playing,
+    Paused,
 }
 
-impl std::fmt::Display for AiError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AiError::OpenAIError(s) => write!(f, "OpenAIError: {}", s),
-            AiError::SerdeError(e) => write!(f, "SerdeError: {}", e),
-        }
+#[derive(Default, Resource)]
+struct Game {
+    player: Player,
+    game_state: GameState,
+    oracle: Option<Oracle>,
+}
+
+struct Oracle {
+    completer: Sender<CompletionQuery>,
+}
+
+impl Oracle {
+    fn ask<Character>(&self, input: CompletionQuery) {
+        let _ = self.completer.send(input);
     }
 }
 
-impl Completer {
-    fn materialize<'a, Q, T: SelfDescribe<Input = Q> + DeserializeOwned + Default>(
-        &self,
-        input: &Q,
-    ) -> Result<T, AiError> {
-        let t = T::default();
-        let message = t.describe(input);
-
-        println!("Sending the following message: \"{message}\"");
-
-        let body = ChatBody {
-            model: "gpt-3.5-turbo".to_string(),
-            max_tokens: None,
-            temperature: Some(0_f32),
-            top_p: Some(0_f32),
-            n: Some(1),
-            stream: Some(false),
-            stop: None,
-            presence_penalty: None,
-            frequency_penalty: None,
-            logit_bias: None,
-            user: None,
-            messages: vec![Message {
-                role: Role::User,
-                content: message,
-            }],
-        };
-        let result = self
-            .client
-            .chat_completion_create(&body)
-            .map_err(|e| AiError::OpenAIError(e.to_string()))?;
-
-        let message = result
-            .choices
-            .first()
-            .ok_or_else(|| AiError::OpenAIError("No choices returned".into()))?
-            .message
-            .as_ref()
-            .ok_or_else(|| AiError::OpenAIError("No message returned".into()))?
-            .content
-            .clone();
-
-        serde_json::from_str::<T>(&message).map_err(|e| {
-            AiError::SerdeError(format!(
-                "Could not parse the following: \n {message} \n {e}"
-            ))
-        })
-    }
-}
-
-fn main() {
-    // Load API key from environment OPENAI_API_KEY.
-    // You can also hadcode through `Auth::new(<your_api_key>)`, but it is not recommended.
-
+fn default_completer() -> Oracle {
     let auth = Auth::from_env().unwrap();
     let openai = OpenAI::new(auth, "https://api.openai.com/v1/");
 
     let completer = Completer { client: openai };
 
-    let input: String = "a beautiful sorceress, dark hair, adept in fire magic".into();
-    let thing = completer.materialize::<String, Character>(&input);
+    //spawn new thread first for our background processing
 
-    println!("Got the following response {thing:?}");
+    let (send_ask, receive_ask): (Sender<CompletionQuery>, Receiver<CompletionQuery>) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        while (true) {
+            let query = receive_ask.recv().unwrap();
+            let character = completer.complete_as::<Character>(query).expect("Ooops?");
+            println!("Got the following response {character:?}");
+        }
+    });
+
+    Oracle {
+        completer: send_ask,
+    }
+
+    // let input: String = "a beautiful sorceress, dark hair, adept in fire magic".into();
+    // let thing = completer.materialize::<String, Character>(&input);
+
+    // println!("Got the following response {thing:?}");
+}
+
+fn main() {
+    App::new()
+        .init_resource::<Game>()
+        // .add_plugins(DefaultPlugins)
+        .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            (keyboard_input_system, animate_sprite, requestor_system),
+        )
+        .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest())) // prevents blurry sprites
+        .run();
+}
+
+fn keyboard_input_system(game_state: Res<Game>, keyboard_input: Res<Input<KeyCode>>) {
+    if keyboard_input.pressed(KeyCode::A) {
+        // info!("'A' currently pressed");
+    }
+
+    if keyboard_input.just_pressed(KeyCode::A) {
+        // info!("'A' just pressed");
+    }
+
+    if keyboard_input.just_released(KeyCode::A) {
+        if let Some(oracle) = &game_state.oracle {
+            let input: String = "a beautiful sorceress, dark hair, adept in ice magic".into();
+            let thing = generator::query::<String, Character>(&input);
+            oracle.ask::<Character>(thing);
+
+            // println!("Got the following response {thing:?}");
+        };
+        info!("'A' just released");
+    }
+}
+
+fn requestor_system(keyboard_input: Res<Input<KeyCode>>, mut game: ResMut<Game>) {
+    if keyboard_input.just_pressed(KeyCode::Space) {
+        game.game_state = GameState::Paused;
+    }
+}
+
+#[derive(Component)]
+struct AnimationIndices {
+    first: usize,
+    last: usize,
+}
+
+#[derive(Component, Deref, DerefMut)]
+struct AnimationTimer(Timer);
+
+fn animate_sprite(
+    time: Res<Time>,
+    mut query: Query<(
+        &AnimationIndices,
+        &mut AnimationTimer,
+        &mut TextureAtlasSprite,
+    )>,
+) {
+    for (indices, mut timer, mut sprite) in &mut query {
+        timer.tick(time.delta());
+        if timer.just_finished() {
+            sprite.index = if sprite.index == indices.last {
+                indices.first
+            } else {
+                sprite.index + 1
+            };
+        }
+    }
+}
+
+fn setup(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut game: ResMut<Game>,
+    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
+) {
+    let texture_handle = asset_server.load("gabe-idle-run.png");
+    let texture_atlas =
+        TextureAtlas::from_grid(texture_handle, Vec2::new(24.0, 24.0), 7, 1, None, None);
+    let texture_atlas_handle = texture_atlases.add(texture_atlas);
+    // Use only the subset of sprites in the sheet that make up the run animation
+    let animation_indices = AnimationIndices { first: 1, last: 6 };
+    commands.spawn(Camera2dBundle::default());
+    commands.spawn((
+        SpriteSheetBundle {
+            texture_atlas: texture_atlas_handle,
+            sprite: TextureAtlasSprite::new(animation_indices.first),
+            transform: Transform::from_scale(Vec3::splat(6.0)),
+            ..default()
+        },
+        animation_indices,
+        AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
+    ));
+
+    game.game_state = GameState::Playing;
+    game.oracle = Some(default_completer());
 }
