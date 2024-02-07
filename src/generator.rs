@@ -1,6 +1,5 @@
 use openai_api_rust::chat::*;
 use openai_api_rust::*;
-use serde::de::DeserializeOwned;
 
 use entity::SelfDescribe;
 
@@ -13,14 +12,12 @@ pub struct Completer {
 #[derive(Debug)]
 pub enum AiError {
     OpenAIError(String),
-    SerdeError(String),
 }
 
 impl std::fmt::Display for AiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AiError::OpenAIError(s) => write!(f, "OpenAIError: {}", s),
-            AiError::SerdeError(e) => write!(f, "SerdeError: {}", e),
         }
     }
 }
@@ -68,18 +65,5 @@ impl Completer {
             .ok_or_else(|| AiError::OpenAIError("No message returned".into()))?
             .content
             .clone())
-    }
-
-    pub fn complete_as<T>(&self, body: CompletionQuery) -> Result<T, AiError>
-    where
-        T: DeserializeOwned,
-    {
-        let response = self.complete(body)?;
-
-        serde_json::from_str::<T>(&response).map_err(|e| {
-            AiError::SerdeError(format!(
-                "Could not parse the following: \n {response} \n {e}"
-            ))
-        })
     }
 }

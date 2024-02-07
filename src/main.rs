@@ -4,8 +4,11 @@ mod generator;
 use bevy::prelude::*;
 use generator::Completer;
 use openai_api_rust::{Auth, OpenAI};
-use std::sync::mpsc;
+use rand::Rng;
+use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{mpsc, Arc, RwLock};
+use std::time::Duration;
 
 use crate::entity::character::Character;
 use crate::generator::CompletionQuery;
@@ -21,20 +24,26 @@ enum GameState {
 #[derive(Default, Resource)]
 struct Game {
     game_state: GameState,
+    asker: Option<Sender<CompletionQuery>>,
     oracle: Option<Oracle>,
 }
 
 struct Oracle {
-    completer: Sender<CompletionQuery>,
+    // completer: Sender<CompletionQuery>,
+    completion_queue: Arc<RwLock<VecDeque<String>>>,
 }
 
 impl Oracle {
-    fn ask<Character>(&self, input: CompletionQuery) {
-        let _ = self.completer.send(input);
+    fn poll(&self) {
+        let mut lock = self.completion_queue.write().unwrap();
+        // println!("Reading the queue");
+        while let Some(item) = lock.pop_front() {
+            println!("{item}");
+        }
     }
 }
 
-fn default_completer() -> Oracle {
+fn default_completer() -> (Sender<CompletionQuery>, Oracle) {
     let auth = Auth::from_env().unwrap();
     let openai = OpenAI::new(auth, "https://api.openai.com/v1/");
 
@@ -43,16 +52,26 @@ fn default_completer() -> Oracle {
     let (send_ask, receive_ask): (Sender<CompletionQuery>, Receiver<CompletionQuery>) =
         mpsc::channel();
 
+    let queue: VecDeque<String> = VecDeque::default();
+    let lock = Arc::new(std::sync::RwLock::new(queue));
+
+    let write_lock = lock.clone();
     //spawn new thread first for our background processing, this is a terrible, terrible idea and needs fixing
     std::thread::spawn(move || loop {
         let query = receive_ask.recv().unwrap();
-        let character = completer.complete_as::<Character>(query).expect("Ooops?");
-        println!("Got the following response {character:?}");
+        println!("Oooo, got me a query");
+        let character = completer.complete(query).expect("Ooops?");
+        write_lock.write().unwrap().push_back(character);
+        println!("Sent to the queue");
     });
 
-    Oracle {
-        completer: send_ask,
-    }
+    (
+        send_ask,
+        Oracle {
+            // completer: send_ask,
+            completion_queue: lock,
+        },
+    )
 }
 
 fn main() {
@@ -62,7 +81,12 @@ fn main() {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (keyboard_input_system, animate_sprite, requestor_system),
+            (
+                keyboard_input_system,
+                animate_sprite,
+                requestor_system,
+                read_oracle,
+            ),
         )
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest())) // prevents blurry sprites
         .run();
@@ -78,12 +102,12 @@ fn keyboard_input_system(game_state: Res<Game>, keyboard_input: Res<Input<KeyCod
     }
 
     if keyboard_input.just_released(KeyCode::A) {
-        if let Some(oracle) = &game_state.oracle {
+        if let Some(asker) = &game_state.asker {
+            println!("WHEEEE");
             let input: String = "a beautiful sorceress, dark hair, adept in ice magic".into();
-            let thing = generator::query::<String, Character>(&input);
-            oracle.ask::<Character>(thing);
-
-            // println!("Got the following response {thing:?}");
+            let query = generator::query::<String, Character>(&input);
+            asker.send(query).expect("Channel send failed");
+            println!("Released");
         };
         info!("'A' just released");
     }
@@ -124,30 +148,87 @@ fn animate_sprite(
     }
 }
 
+#[derive(Resource)]
+struct OracleReaderConfig {
+    timer: Timer,
+}
+
+fn read_oracle(
+    game: ResMut<Game>,
+    time: Res<Time>,
+    mut config: ResMut<OracleReaderConfig>,
+) {
+    // tick the timer
+    config.timer.tick(time.delta());
+
+    if config.timer.finished() {
+        game.oracle.as_ref().unwrap().poll();
+    }
+}
+
 fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut game: ResMut<Game>,
-    mut texture_atlases: ResMut<Assets<TextureAtlas>>,
+    mut texture_assets: ResMut<Assets<TextureAtlas>>,
 ) {
-    let texture_handle = asset_server.load("gabe-idle-run.png");
-    let texture_atlas =
-        TextureAtlas::from_grid(texture_handle, Vec2::new(24.0, 24.0), 7, 1, None, None);
-    let texture_atlas_handle = texture_atlases.add(texture_atlas);
+    let character_handle = asset_server.load("gabe-idle-run.png");
+    let terrain_handle = asset_server.load("map.png");
+
+    let character_atlas =
+        TextureAtlas::from_grid(character_handle, Vec2::new(24.0, 24.0), 7, 1, None, None);
+
+    let terrain_atlas =
+        TextureAtlas::from_grid(terrain_handle, Vec2::new(64.0, 32.0), 16, 2, None, None);
+
+    let terrain_atlas_handle = texture_assets.add(terrain_atlas);
+    let character_atlas_handle = texture_assets.add(character_atlas);
+
     // Use only the subset of sprites in the sheet that make up the run animation
     let animation_indices = AnimationIndices { first: 1, last: 6 };
     commands.spawn(Camera2dBundle::default());
+
+
+    let scale_factor = 3;
+
+    for x in 0..10 {
+        for y in 0..10 {
+            let rand = rand::thread_rng().sample(rand::distributions::Uniform::new(0, 16));
+
+            let scale = Vec3::new(scale_factor as f32, scale_factor as f32, 2f32);
+            commands.spawn((SpriteSheetBundle {
+                texture_atlas: terrain_atlas_handle.clone(),
+                sprite: TextureAtlasSprite::new(rand),
+                transform: Transform::from_translation(Vec3::new(
+                    ((y - x) * 32 * scale_factor) as f32,
+                    ((x + y) * 16 * scale_factor) as f32,
+                    10.0,
+                ))
+                .with_scale(scale),
+                ..default()
+            },));
+        }
+    }
+
     commands.spawn((
         SpriteSheetBundle {
-            texture_atlas: texture_atlas_handle,
+            texture_atlas: character_atlas_handle,
             sprite: TextureAtlasSprite::new(animation_indices.first),
-            transform: Transform::from_scale(Vec3::splat(6.0)),
+            transform: Transform::from_scale(Vec3::splat(6.0))
+                .with_translation(Vec3::new(400.0, 10.0, 10.00)),
             ..default()
         },
         animation_indices,
         AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
     ));
 
+    commands.insert_resource(OracleReaderConfig {
+        // create the repeating timer
+        timer: Timer::new(Duration::from_secs(1), TimerMode::Repeating),
+    });
+
     game.game_state = GameState::Playing;
-    game.oracle = Some(default_completer());
+    let (asker, oracle) = default_completer();
+    game.oracle = Some(oracle);
+    game.asker = Some(asker);
 }
