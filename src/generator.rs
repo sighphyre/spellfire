@@ -28,8 +28,6 @@ pub fn query<Q, T: SelfDescribe<Input = Q> + Default>(input: &Q) -> CompletionQu
     let t = T::default();
     let message = t.describe(input);
 
-    // println!("Building the following message: \"{message}\"");
-
     ChatBody {
         model: "gpt-3.5-turbo".to_string(),
         max_tokens: None,

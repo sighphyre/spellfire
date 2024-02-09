@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use super::{character::Character, location::Location, SelfDescribe};
 
-
-
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Encounter {
     name: String,

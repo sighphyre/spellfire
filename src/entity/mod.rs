@@ -1,6 +1,6 @@
 pub mod character;
-pub mod location;
 pub mod encounter;
+pub mod location;
 
 trait Describe<T> {
     fn describe(&self, input: T) -> String;

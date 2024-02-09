@@ -24,6 +24,8 @@ enum GameState {
 #[derive(Default, Resource)]
 struct Game {
     game_state: GameState,
+    x_position: f32,
+    y_position: f32,
     asker: Option<Sender<CompletionQuery>>,
     oracle: Option<Oracle>,
 }
@@ -74,6 +76,9 @@ fn default_completer() -> (Sender<CompletionQuery>, Oracle) {
     )
 }
 
+#[derive(Component)]
+struct Terrain {}
+
 fn main() {
     App::new()
         .init_resource::<Game>()
@@ -86,15 +91,26 @@ fn main() {
                 animate_sprite,
                 requestor_system,
                 read_oracle,
+                slide_terrain,
             ),
         )
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest())) // prevents blurry sprites
         .run();
 }
 
-fn keyboard_input_system(game_state: Res<Game>, keyboard_input: Res<Input<KeyCode>>) {
+fn keyboard_input_system(mut game_state: ResMut<Game>, keyboard_input: Res<Input<KeyCode>>) {
     if keyboard_input.pressed(KeyCode::A) {
+        game_state.x_position -= 1.0;
         // info!("'A' currently pressed");
+    } else if keyboard_input.pressed(KeyCode::D) {
+        game_state.x_position += 1.0;
+        // info!("'D' currently pressed");
+    } else if keyboard_input.pressed(KeyCode::W) {
+        game_state.y_position += 1.0;
+        // info!("'W' currently pressed");
+    } else if keyboard_input.pressed(KeyCode::S) {
+        game_state.y_position -= 1.0;
+        // info!("'S' currently pressed");
     }
 
     if keyboard_input.just_pressed(KeyCode::A) {
@@ -116,6 +132,14 @@ fn keyboard_input_system(game_state: Res<Game>, keyboard_input: Res<Input<KeyCod
 fn requestor_system(keyboard_input: Res<Input<KeyCode>>, mut game: ResMut<Game>) {
     if keyboard_input.just_pressed(KeyCode::Space) {
         game.game_state = GameState::Paused;
+    }
+}
+
+fn slide_terrain(game: Res<Game>, mut tile_position: Query<(&mut Terrain, &mut Transform)>) {
+    for (mut _terrain, mut transform) in &mut tile_position {
+        // let x = time.x_position;
+        transform.translation.x += game.x_position;
+        transform.translation.y += game.y_position;
     }
 }
 
@@ -153,11 +177,7 @@ struct OracleReaderConfig {
     timer: Timer,
 }
 
-fn read_oracle(
-    game: ResMut<Game>,
-    time: Res<Time>,
-    mut config: ResMut<OracleReaderConfig>,
-) {
+fn read_oracle(game: ResMut<Game>, time: Res<Time>, mut config: ResMut<OracleReaderConfig>) {
     // tick the timer
     config.timer.tick(time.delta());
 
@@ -188,7 +208,6 @@ fn setup(
     let animation_indices = AnimationIndices { first: 1, last: 6 };
     commands.spawn(Camera2dBundle::default());
 
-
     let scale_factor = 3;
 
     for x in 0..10 {
@@ -196,17 +215,20 @@ fn setup(
             let rand = rand::thread_rng().sample(rand::distributions::Uniform::new(0, 16));
 
             let scale = Vec3::new(scale_factor as f32, scale_factor as f32, 2f32);
-            commands.spawn((SpriteSheetBundle {
-                texture_atlas: terrain_atlas_handle.clone(),
-                sprite: TextureAtlasSprite::new(rand),
-                transform: Transform::from_translation(Vec3::new(
-                    ((y - x) * 32 * scale_factor) as f32,
-                    ((x + y) * 16 * scale_factor) as f32,
-                    10.0,
-                ))
-                .with_scale(scale),
-                ..default()
-            },));
+            commands.spawn((
+                SpriteSheetBundle {
+                    texture_atlas: terrain_atlas_handle.clone(),
+                    sprite: TextureAtlasSprite::new(rand),
+                    transform: Transform::from_translation(Vec3::new(
+                        ((y - x) * 32 * scale_factor) as f32,
+                        ((x + y) * 16 * scale_factor) as f32,
+                        10.0,
+                    ))
+                    .with_scale(scale),
+                    ..default()
+                },
+                Terrain {},
+            ));
         }
     }
 
