@@ -2,8 +2,8 @@ mod entity;
 mod generator;
 mod memory;
 
-use benimator::Animation;
-use bevy::prelude::*;
+use bevy::window::WindowMode;
+use bevy::{prelude::*, text, transform};
 use generator::Completer;
 use openai_api_rust::{Auth, OpenAI};
 use rand::Rng;
@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Arc, RwLock};
 use std::time::Duration;
+use uuid::Uuid;
 
 use crate::entity::character::Character;
 use crate::generator::CompletionQuery;
@@ -37,10 +38,24 @@ enum Direction {
     SW,
 }
 
+impl Direction {
+    fn as_vec(&self) -> Vec2 {
+        match self {
+            Direction::W => Vec2::new(-1.0, 0.0),
+            Direction::NW => Vec2::new(-0.7, 0.7),
+            Direction::N => Vec2::new(0.0, 1.0),
+            Direction::NE => Vec2::new(0.7, 0.7),
+            Direction::E => Vec2::new(1.0, 0.0),
+            Direction::SE => Vec2::new(0.7, -0.7),
+            Direction::S => Vec2::new(0.0, -1.0),
+            Direction::SW => Vec2::new(-0.7, -0.7),
+        }
+    }
+}
+
 #[derive(Default, Resource)]
 struct Game {
     game_state: GameState,
-    direction: Direction,
     x_position: f32,
     y_position: f32,
     asker: Option<Sender<CompletionQuery>>,
@@ -48,16 +63,20 @@ struct Game {
 }
 
 struct Oracle {
-    // completer: Sender<CompletionQuery>,
-    completion_queue: Arc<RwLock<VecDeque<String>>>,
+    completion_queue: Arc<RwLock<VecDeque<(Uuid, String)>>>,
 }
 
 impl Oracle {
-    fn poll(&self) {
+    fn get_messages(&self) -> Option<Vec<(Uuid, String)>> {
         let mut lock = self.completion_queue.write().unwrap();
-        // println!("Reading the queue");
-        while let Some(item) = lock.pop_front() {
-            println!("{item}");
+        if lock.is_empty() {
+            None
+        } else {
+            let mut result = Vec::new();
+            while let Some(item) = lock.pop_front() {
+                result.push(item);
+            }
+            Some(result)
         }
     }
 }
@@ -71,23 +90,25 @@ fn default_completer() -> (Sender<CompletionQuery>, Oracle) {
     let (send_ask, receive_ask): (Sender<CompletionQuery>, Receiver<CompletionQuery>) =
         mpsc::channel();
 
-    let queue: VecDeque<String> = VecDeque::default();
+    let queue: VecDeque<(Uuid, String)> = VecDeque::default();
     let lock = Arc::new(std::sync::RwLock::new(queue));
 
     let write_lock = lock.clone();
+
     //spawn new thread first for our background processing, this is a terrible, terrible idea and needs fixing
     std::thread::spawn(move || loop {
         let query = receive_ask.recv().unwrap();
         println!("Oooo, got me a query");
         let character = completer.complete(query).expect("Ooops?");
-        write_lock.write().unwrap().push_back(character);
-        println!("Sent to the queue");
+        write_lock
+            .write()
+            .unwrap()
+            .push_back((Uuid::new_v4(), character));
     });
 
     (
         send_ask,
         Oracle {
-            // completer: send_ask,
             completion_queue: lock,
         },
     )
@@ -95,58 +116,6 @@ fn default_completer() -> (Sender<CompletionQuery>, Oracle) {
 
 #[derive(Component)]
 struct Terrain {}
-
-fn main() {
-    App::new()
-        .init_resource::<Game>()
-        // .add_plugins(DefaultPlugins)
-        .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            (
-                // keyboard_input_system,
-                animate_sprite,
-                requestor_system,
-                read_oracle,
-                slide_terrain,
-                move_player,
-                control_player,
-            ),
-        )
-        .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest())) // prevents blurry sprites
-        .run();
-}
-
-// fn keyboard_input_system(mut game_state: ResMut<Game>, keyboard_input: Res<Input<KeyCode>>) {
-//     if keyboard_input.pressed(KeyCode::A) {
-//         game_state.x_position -= 1.0;
-//         // info!("'A' currently pressed");
-//     } else if keyboard_input.pressed(KeyCode::D) {
-//         game_state.x_position += 1.0;
-//         // info!("'D' currently pressed");
-//     } else if keyboard_input.pressed(KeyCode::W) {
-//         game_state.y_position += 1.0;
-//         // info!("'W' currently pressed");
-//     } else if keyboard_input.pressed(KeyCode::S) {
-//         game_state.y_position -= 1.0;
-//         // info!("'S' currently pressed");
-//     }
-
-//     if keyboard_input.just_pressed(KeyCode::A) {
-//         // info!("'A' just pressed");
-//     }
-
-//     if keyboard_input.just_released(KeyCode::A) {
-//         if let Some(asker) = &game_state.asker {
-//             println!("WHEEEE");
-//             let input: String = "a beautiful sorceress, dark hair, adept in ice magic".into();
-//             let query = generator::query::<String, Character>(&input);
-//             asker.send(query).expect("Channel send failed");
-//             println!("Released");
-//         };
-//         info!("'A' just released");
-//     }
-// }
 
 fn requestor_system(keyboard_input: Res<Input<KeyCode>>, mut game: ResMut<Game>) {
     if keyboard_input.just_pressed(KeyCode::Space) {
@@ -156,7 +125,6 @@ fn requestor_system(keyboard_input: Res<Input<KeyCode>>, mut game: ResMut<Game>)
 
 fn slide_terrain(game: Res<Game>, mut tile_position: Query<(&mut Terrain, &mut Transform)>) {
     for (mut _terrain, mut transform) in &mut tile_position {
-        // let x = time.x_position;
         transform.translation.x += game.x_position;
         transform.translation.y += game.y_position;
     }
@@ -228,109 +196,135 @@ fn animate_sprite(
     }
 }
 
+fn keyboard_to_direction<'a>(
+    key_events: impl ExactSizeIterator<Item = &'a KeyCode>,
+) -> Option<Direction> {
+    let direction = key_events.fold(0, |acc, key| match key {
+        KeyCode::A => acc | 0b0001,
+        KeyCode::D => acc | 0b0010,
+        KeyCode::W => acc | 0b0100,
+        KeyCode::S => acc | 0b1000,
+        _ => acc,
+    });
+
+    match direction {
+        0b0001 => Some(Direction::W),
+        0b0010 => Some(Direction::E),
+        0b0100 => Some(Direction::N),
+        0b1000 => Some(Direction::S),
+        0b0101 => Some(Direction::NW),
+        0b0110 => Some(Direction::NE),
+        0b1001 => Some(Direction::SW),
+        0b1010 => Some(Direction::SE),
+        _ => None,
+    }
+}
+
 fn control_player(
     keyboard_input: Res<Input<KeyCode>>,
-    mut query: Query<(&HumanController, &mut CharacterState)>,
-    time: Res<Time>,
+    game_state: Res<Game>,
+    mut query: Query<(&HumanController, &mut CharacterState, &Children)>,
+    mut text_query: Query<&mut Text>,
 ) {
-    let (mut _controller, mut state) = query.single_mut();
+    let (mut _controller, mut state, children) = query.single_mut();
 
-    let mut direction = state.direction.clone();
-
-    if keyboard_input.pressed(KeyCode::A) && keyboard_input.pressed(KeyCode::W) {
-        direction = Direction::NW;
-        state.action = Action::Running;
-    } else if keyboard_input.pressed(KeyCode::D) && keyboard_input.pressed(KeyCode::W) {
-        direction = Direction::NE;
-        state.action = Action::Running;
-    } else if keyboard_input.pressed(KeyCode::A) && keyboard_input.pressed(KeyCode::S) {
-        direction = Direction::SW;
-        state.action = Action::Running;
-    } else if keyboard_input.pressed(KeyCode::D) && keyboard_input.pressed(KeyCode::S) {
-        direction = Direction::SE;
-        state.action = Action::Running;
-    } else if keyboard_input.pressed(KeyCode::A) {
-        direction = Direction::W;
-        state.action = Action::Running;
-    } else if keyboard_input.pressed(KeyCode::D) {
-        direction = Direction::E;
-        state.action = Action::Running;
-    } else if keyboard_input.pressed(KeyCode::W) {
-        direction = Direction::N;
-        state.action = Action::Running;
-    } else if keyboard_input.pressed(KeyCode::S) {
-        direction = Direction::S;
+    if let Some(direction) = keyboard_to_direction(keyboard_input.get_pressed()) {
+        state.direction = direction;
         state.action = Action::Running;
     } else if keyboard_input.pressed(KeyCode::Space) {
         state.action = Action::Attacking;
-    } else if keyboard_input.pressed(KeyCode::Q) {
-        state.action = Action::Dying;
+    } else if keyboard_input.pressed(KeyCode::Escape) {
+        std::process::exit(0);
+    } else if keyboard_input.just_pressed(KeyCode::Return) {
+        for child in children.iter() {
+            let mut text = text_query.get_mut(*child).unwrap();
+            text.sections[0].value = "...".to_string();
+            if let Some(asker) = &game_state.asker {
+                let input: String = "a beautiful sorceress, dark hair, adept in ice magic".into();
+                let query = generator::query::<String, Character>(&input);
+                asker.send(query).expect("Channel send failed");
+            };
+        }
     } else {
         state.action = Action::Idle;
     }
-
-    state.direction = direction;
 }
 
-fn move_player(mut query: Query<(&mut Transform, &CharacterState)>, time: Res<Time>) {
-    let (mut player_transform, character_state) = query.single_mut();
+fn control_ai(mut query: Query<(&mut AiController, &mut CharacterState)>, time: Res<Time>) {
+    for (mut controller, mut state) in &mut query {
+        controller.ticks_since_last_action += time.delta_seconds();
 
-    if character_state.action != Action::Running {
-        return;
+        let current_ticks = controller.ticks_since_last_action;
+
+        if state.action == Action::Idle && state.direction == Direction::N && current_ticks > 4.0 {
+            state.action = Action::Running;
+            state.direction = Direction::W;
+            controller.ticks_since_last_action = 0.0;
+            continue;
+        } else if state.action == Action::Running
+            && state.direction == Direction::W
+            && current_ticks > 5.0
+        {
+            state.action = Action::Idle;
+            state.direction = Direction::S;
+            controller.ticks_since_last_action = 0.0;
+            continue;
+        }
+        if state.action == Action::Idle && state.direction == Direction::S && current_ticks > 4.0 {
+            state.action = Action::Running;
+            state.direction = Direction::E;
+            controller.ticks_since_last_action = 0.0;
+            continue;
+        } else if state.action == Action::Running
+            && state.direction == Direction::E
+            && current_ticks > 5.0
+        {
+            state.action = Action::Idle;
+            state.direction = Direction::N;
+            controller.ticks_since_last_action = 0.0;
+            continue;
+        }
     }
+}
 
-    let x = match character_state.direction {
-        Direction::W => -1.0,
-        Direction::NW => -0.7,
-        Direction::N => 0.0,
-        Direction::NE => 0.7,
-        Direction::E => 1.0,
-        Direction::SE => 0.7,
-        Direction::S => 0.0,
-        Direction::SW => -0.7,
-    };
+fn speak_system(
+    game_state: Res<Game>,
+    keyboard_input: Res<Input<KeyCode>>,
+    player_query: Query<(&HumanController, &Children)>,
+    mut text_query: Query<&mut Text>,
+) {
+}
 
-    let y = match character_state.direction {
-        Direction::W => 0.0,
-        Direction::NW => 0.7,
-        Direction::N => 1.0,
-        Direction::NE => 0.7,
-        Direction::E => 0.0,
-        Direction::SE => -0.7,
-        Direction::S => -1.0,
-        Direction::SW => -0.7,
-    };
+fn move_character(mut query: Query<(&mut Transform, &mut CharacterState)>, time: Res<Time>) {
+    // let (mut player_transform, character_state) = query.single_mut();
 
-    player_transform.translation.x =
-        player_transform.translation.x + x * 100f32 * time.delta_seconds();
-    player_transform.translation.y =
-        player_transform.translation.y + y * 100f32 * time.delta_seconds();
+    for (mut player_transform, character_state) in &mut query {
+        if character_state.action != Action::Running {
+            continue;
+        }
 
-    // player_transform.translation.x += 1.0;
-    // let mut direction = 1.0;
+        let character_direction = character_state.direction.as_vec();
+        let (x, y) = (character_direction.x, character_direction.y);
 
-    // if keyboard_input.pressed(KeyCode::A) {
-    //     direction -= 1.0;
-    // }
-
-    // if keyboard_input.pressed(KeyCode::B) {
-    //     direction += 1.0;
-    // }
-
-    // // // Calculate the new horizontal paddle position based on player input
-    // let new_player_position =
-    // player_transform.translation.x + direction * 500f32 * time.delta_seconds();
-
-    // // // Update the paddle position,
-    // // // making sure it doesn't cause the paddle to leave the arena
-    // // let left_bound = LEFT_WALL + WALL_THICKNESS / 2.0 + PADDLE_SIZE.x / 2.0 + PADDLE_PADDING;
-    // // let right_bound = RIGHT_WALL - WALL_THICKNESS / 2.0 - PADDLE_SIZE.x / 2.0 - PADDLE_PADDING;
-
-    // player_transform.translation.x = new_player_position;
+        player_transform.translation.x =
+            player_transform.translation.x + x * 170f32 * time.delta_seconds();
+        player_transform.translation.y =
+            player_transform.translation.y + y * 170f32 * time.delta_seconds();
+    }
 }
 
 #[derive(Component)]
 struct HumanController;
+
+#[derive(Component)]
+struct AiController {
+    ticks_since_last_action: f32,
+}
+
+#[derive(Component)]
+struct Speaker {
+    last_request: Option<Uuid>,
+}
 
 #[derive(Component, PartialEq, Eq)]
 struct CharacterState {
@@ -343,12 +337,26 @@ struct OracleReaderConfig {
     timer: Timer,
 }
 
-fn read_oracle(game: ResMut<Game>, time: Res<Time>, mut config: ResMut<OracleReaderConfig>) {
-    // tick the timer
+fn read_oracle(
+    game: ResMut<Game>,
+    time: Res<Time>,
+    mut config: ResMut<OracleReaderConfig>,
+    player_query: Query<(&HumanController, &Children)>,
+    mut text_query: Query<&mut Text>,
+) {
     config.timer.tick(time.delta());
 
     if config.timer.finished() {
-        game.oracle.as_ref().unwrap().poll();
+        if let Some(messages) = game.oracle.as_ref().unwrap().get_messages() {
+            for message in messages.iter() {
+                for (_player, children) in &player_query {
+                    for child in children.iter() {
+                        let mut text = text_query.get_mut(*child).unwrap();
+                        text.sections[0].value = message.1.to_string();
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -386,24 +394,6 @@ fn setup(
         last: 15,
     };
 
-    // let character_handle = asset_server.load("horse_paint.png");
-    // let character_atlas =
-    // TextureAtlas::from_grid(character_handle, Vec2::new(128.0, 128.0), 24, 8, None, None);
-
-    // let character_atlas_handle = texture_assets.add(character_atlas);
-
-    // let idle_animation = AnimationIndices { first: 0, last: 3 };
-    // let walking_animation = AnimationIndices { first: 4, last: 7 };
-    // let running_animation = AnimationIndices { first: 8, last: 11 };
-    // let hit_animation = AnimationIndices {
-    //     first: 12,
-    //     last: 15,
-    // };
-    // let dying_animation = AnimationIndices {
-    //     first: 16,
-    //     last: 23,
-    // };
-
     let animation_set = AnimationSet {
         walking: walking_animation,
         running: running_animation,
@@ -412,6 +402,14 @@ fn setup(
         dying: dying_animation,
         attack: attack_animation,
     };
+
+    let font = asset_server.load("fonts/FiraMono-Medium.ttf");
+    let text_style = TextStyle {
+        font: font.clone(),
+        font_size: 15.0,
+        color: Color::RED,
+    };
+    let text_alignment = TextAlignment::Center;
 
     commands.spawn(Camera2dBundle::default());
 
@@ -439,25 +437,68 @@ fn setup(
         }
     }
 
-    commands.spawn((
-        SpriteSheetBundle {
-            texture_atlas: character_atlas_handle,
-            sprite: TextureAtlasSprite::new(0),
-            transform: Transform::from_scale(Vec3::splat(2.0))
-                .with_translation(Vec3::new(400.0, 10.0, 10.00)),
-            ..default()
-        },
-        animation_set,
-        AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
-        CharacterState {
-            action: Action::Idle,
-            direction: Direction::N,
-        },
-        HumanController {},
-    ));
+    commands
+        .spawn((
+            SpriteSheetBundle {
+                texture_atlas: character_atlas_handle.clone(),
+                sprite: TextureAtlasSprite::new(0),
+                transform: Transform::from_scale(Vec3::splat(2.0))
+                    .with_translation(Vec3::new(400.0, 10.0, 10.00)),
+                ..default()
+            },
+            animation_set.clone(),
+            AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
+            CharacterState {
+                action: Action::Idle,
+                direction: Direction::N,
+            },
+            HumanController {},
+        ))
+        .with_children(|parent| {
+            parent.spawn(Text2dBundle {
+                text: Text::from_section("", text_style.clone()).with_alignment(text_alignment),
+                transform: Transform {
+                    translation: Vec3::new(0.0, 50.0, 0.0),
+                    ..default()
+                },
+                ..default()
+            });
+        });
+
+    commands
+        .spawn((
+            SpriteSheetBundle {
+                texture_atlas: character_atlas_handle,
+                sprite: TextureAtlasSprite::new(0),
+                transform: Transform::from_scale(Vec3::splat(2.0))
+                    .with_translation(Vec3::new(300.0, 10.0, 10.00)),
+                ..default()
+            },
+            animation_set,
+            AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
+            CharacterState {
+                action: Action::Idle,
+                direction: Direction::N,
+            },
+            AiController {
+                ticks_since_last_action: 0.0,
+            },
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Text2dBundle {
+                    text: Text::from_section("", text_style).with_alignment(text_alignment),
+                    transform: Transform {
+                        translation: Vec3::new(0.0, 50.0, 0.0),
+                        ..default()
+                    },
+                    ..default()
+                },
+                Speaker { last_request: None },
+            ));
+        });
 
     commands.insert_resource(OracleReaderConfig {
-        // create the repeating timer
         timer: Timer::new(Duration::from_secs(1), TimerMode::Repeating),
     });
 
@@ -465,4 +506,36 @@ fn setup(
     let (asker, oracle) = default_completer();
     game.oracle = Some(oracle);
     game.asker = Some(asker);
+}
+
+fn main() {
+    App::new()
+        .init_resource::<Game>()
+        .add_systems(Startup, setup)
+        .add_systems(
+            Update,
+            (
+                animate_sprite,
+                requestor_system,
+                read_oracle,
+                slide_terrain,
+                move_character,
+                control_player,
+                control_ai,
+                speak_system,
+            ),
+        )
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        resizable: true,
+                        mode: WindowMode::BorderlessFullscreen,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(ImagePlugin::default_nearest()),
+        )
+        .run();
 }
