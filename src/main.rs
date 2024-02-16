@@ -1,10 +1,8 @@
-mod entity;
 mod generator;
-mod memory;
 
+use bevy::prelude::*;
 use bevy::window::WindowMode;
-use bevy::{prelude::*, text, transform};
-use generator::Completer;
+use generator::{Completer, Conversation};
 use openai_api_rust::{Auth, OpenAI};
 use rand::Rng;
 use std::collections::VecDeque;
@@ -13,7 +11,6 @@ use std::sync::{mpsc, Arc, RwLock};
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::entity::character::Character;
 use crate::generator::CompletionQuery;
 
 #[derive(Default, Debug)]
@@ -60,6 +57,7 @@ struct Game {
     y_position: f32,
     asker: Option<Sender<CompletionQuery>>,
     oracle: Option<Oracle>,
+    conversation: Conversation,
 }
 
 struct Oracle {
@@ -134,19 +132,15 @@ fn slide_terrain(game: Res<Game>, mut tile_position: Query<(&mut Terrain, &mut T
 enum Action {
     #[default]
     Running,
-    Dying,
     Attacking,
     Idle,
 }
 
 #[derive(Component, Clone)]
 struct AnimationSet {
-    walking: AnimationIndices,
     running: AnimationIndices,
     idle: AnimationIndices,
     hit: AnimationIndices,
-    attack: AnimationIndices,
-    dying: AnimationIndices,
 }
 
 #[derive(Component, Clone)]
@@ -176,7 +170,6 @@ fn animate_sprite(
             let (first, last) = {
                 let indices = match action {
                     Action::Running => anim_set.running.clone(),
-                    Action::Dying => anim_set.dying.clone(),
                     Action::Idle => anim_set.idle.clone(),
                     Action::Attacking => anim_set.hit.clone(),
                 };
@@ -222,7 +215,7 @@ fn keyboard_to_direction<'a>(
 
 fn control_player(
     keyboard_input: Res<Input<KeyCode>>,
-    game_state: Res<Game>,
+    game_state: ResMut<Game>,
     mut query: Query<(&HumanController, &mut CharacterState, &Children)>,
     mut text_query: Query<&mut Text>,
 ) {
@@ -240,9 +233,11 @@ fn control_player(
             let mut text = text_query.get_mut(*child).unwrap();
             text.sections[0].value = "...".to_string();
             if let Some(asker) = &game_state.asker {
-                let input: String = "a beautiful sorceress, dark hair, adept in ice magic".into();
-                let query = generator::query::<String, Character>(&input);
-                asker.send(query).expect("Channel send failed");
+                let next_message_prompt: CompletionQuery = game_state.conversation.clone().into();
+
+                asker
+                    .send(next_message_prompt)
+                    .expect("Channel send failed");
             };
         }
     } else {
@@ -287,14 +282,6 @@ fn control_ai(mut query: Query<(&mut AiController, &mut CharacterState)>, time: 
     }
 }
 
-fn speak_system(
-    game_state: Res<Game>,
-    keyboard_input: Res<Input<KeyCode>>,
-    player_query: Query<(&HumanController, &Children)>,
-    mut text_query: Query<&mut Text>,
-) {
-}
-
 fn move_character(mut query: Query<(&mut Transform, &mut CharacterState)>, time: Res<Time>) {
     // let (mut player_transform, character_state) = query.single_mut();
 
@@ -319,11 +306,6 @@ struct HumanController;
 #[derive(Component)]
 struct AiController {
     ticks_since_last_action: f32,
-}
-
-#[derive(Component)]
-struct Speaker {
-    last_request: Option<Uuid>,
 }
 
 #[derive(Component, PartialEq, Eq)]
@@ -379,28 +361,17 @@ fn setup(
     let character_atlas_handle = texture_assets.add(character_atlas);
 
     let idle_animation = AnimationIndices { first: 0, last: 3 };
-    let walking_animation = AnimationIndices { first: 4, last: 19 };
+
     let running_animation = AnimationIndices { first: 4, last: 11 };
     let hit_animation = AnimationIndices {
         first: 12,
         last: 15,
     };
-    let dying_animation = AnimationIndices {
-        first: 16,
-        last: 23,
-    };
-    let attack_animation = AnimationIndices {
-        first: 12,
-        last: 15,
-    };
 
     let animation_set = AnimationSet {
-        walking: walking_animation,
         running: running_animation,
         idle: idle_animation,
         hit: hit_animation,
-        dying: dying_animation,
-        attack: attack_animation,
     };
 
     let font = asset_server.load("fonts/FiraMono-Medium.ttf");
@@ -485,17 +456,14 @@ fn setup(
             },
         ))
         .with_children(|parent| {
-            parent.spawn((
-                Text2dBundle {
-                    text: Text::from_section("", text_style).with_alignment(text_alignment),
-                    transform: Transform {
-                        translation: Vec3::new(0.0, 50.0, 0.0),
-                        ..default()
-                    },
+            parent.spawn(Text2dBundle {
+                text: Text::from_section("", text_style).with_alignment(text_alignment),
+                transform: Transform {
+                    translation: Vec3::new(0.0, 50.0, 0.0),
                     ..default()
                 },
-                Speaker { last_request: None },
-            ));
+                ..default()
+            });
         });
 
     commands.insert_resource(OracleReaderConfig {
@@ -522,7 +490,6 @@ fn main() {
                 move_character,
                 control_player,
                 control_ai,
-                speak_system,
             ),
         )
         .add_plugins(
