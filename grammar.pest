@@ -1,0 +1,50 @@
+WHITESPACE = _{ " " | "\t" }
+
+direction = { 
+	"up"
+    | "down"
+    | "left"
+    | "right"
+    | "back"
+    | "toward_me"
+}
+
+focus = {
+	target
+    | around_target
+    | me
+    | around_me
+ 	| it
+}
+
+target = { "target" }
+around_target = { "around_target" }
+me = { "me" }
+around_me = { "around_me" }
+it = { "it" }
+
+shape = { "sword" | "person" | "arrow" | "tree" }
+
+
+effect = {
+	lift
+    | compress
+    | transform
+    | heat
+    | push
+}
+
+modifier = {
+	"reverse"
+}
+
+heat = {"heat" ~ focus ~ modifier*  }
+lift = { "lift" ~ focus }
+compress = {"compress" ~ focus}
+transform = { "transform" ~ focus ~ "into" ~ shape }
+push = { "push" }
+
+
+chain = { "then" | "and"}
+
+spell = _{ SOI ~ effect ~ (chain ~ effect)* ~ EOI }
