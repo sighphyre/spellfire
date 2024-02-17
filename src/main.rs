@@ -9,11 +9,11 @@ use bevy::prelude::*;
 use bevy::window::WindowMode;
 use generator::{Completer, Conversation};
 use openai_api_rust::{Auth, OpenAI};
-use rand::Rng;
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{mpsc, Arc, RwLock};
 use std::time::Duration;
+use terrain::TerrainGenerator;
 use uuid::Uuid;
 
 use crate::generator::CompletionQuery;
@@ -28,8 +28,6 @@ enum GameState {
 #[derive(Default, Resource)]
 struct Game {
     game_state: GameState,
-    x_position: f32,
-    y_position: f32,
     asker: Option<Sender<CompletionQuery>>,
     oracle: Option<Oracle>,
     conversation: Conversation,
@@ -85,16 +83,6 @@ fn default_completer() -> (Sender<CompletionQuery>, Oracle) {
             completion_queue: lock,
         },
     )
-}
-
-#[derive(Component)]
-struct Terrain {}
-
-fn slide_terrain(game: Res<Game>, mut tile_position: Query<(&mut Terrain, &mut Transform)>) {
-    for (mut _terrain, mut transform) in &mut tile_position {
-        transform.translation.x += game.x_position;
-        transform.translation.y += game.y_position;
-    }
 }
 
 #[derive(Component, Clone)]
@@ -237,28 +225,10 @@ fn setup(
     };
     commands.spawn(Camera2dBundle::default());
 
-    let scale_factor = 3;
+    let mut terrain_gen = TerrainGenerator::new(10, 10, terrain_atlas_handle.clone());
 
-    for x in 0..10 {
-        for y in 0..10 {
-            let rand = rand::thread_rng().sample(rand::distributions::Uniform::new(0, 16));
-
-            let scale = Vec3::new(scale_factor as f32, scale_factor as f32, 2f32);
-            commands.spawn((
-                SpriteSheetBundle {
-                    texture_atlas: terrain_atlas_handle.clone(),
-                    sprite: TextureAtlasSprite::new(rand),
-                    transform: Transform::from_translation(Vec3::new(
-                        ((y - x) * 32 * scale_factor) as f32,
-                        ((x + y) * 16 * scale_factor) as f32,
-                        10.0,
-                    ))
-                    .with_scale(scale),
-                    ..default()
-                },
-                Terrain {},
-            ));
-        }
+    while let Some(tile) = terrain_gen.next() {
+        commands.spawn(tile);
     }
 
     commands
@@ -298,7 +268,6 @@ fn main() {
             (
                 animate_sprite,
                 read_oracle,
-                slide_terrain,
                 move_agent,
                 control_player,
                 control_ai,
