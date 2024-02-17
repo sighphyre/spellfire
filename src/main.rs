@@ -1,5 +1,9 @@
+mod agent;
 mod generator;
+mod terrain;
 
+use agent::npc::{control_ai, new_ai_agent_bundle};
+use agent::{Action, CharacterState};
 use bevy::prelude::*;
 use bevy::window::WindowMode;
 use generator::{Completer, Conversation};
@@ -18,36 +22,6 @@ enum GameState {
     #[default]
     Loading,
     Playing,
-    Paused,
-}
-
-#[repr(u8)]
-#[derive(Default, Clone, Eq, PartialEq)]
-enum Direction {
-    #[default]
-    W,
-    NW,
-    N,
-    NE,
-    E,
-    SE,
-    S,
-    SW,
-}
-
-impl Direction {
-    fn as_vec(&self) -> Vec2 {
-        match self {
-            Direction::W => Vec2::new(-1.0, 0.0),
-            Direction::NW => Vec2::new(-0.7, 0.7),
-            Direction::N => Vec2::new(0.0, 1.0),
-            Direction::NE => Vec2::new(0.7, 0.7),
-            Direction::E => Vec2::new(1.0, 0.0),
-            Direction::SE => Vec2::new(0.7, -0.7),
-            Direction::S => Vec2::new(0.0, -1.0),
-            Direction::SW => Vec2::new(-0.7, -0.7),
-        }
-    }
 }
 
 #[derive(Default, Resource)]
@@ -115,25 +89,11 @@ fn default_completer() -> (Sender<CompletionQuery>, Oracle) {
 #[derive(Component)]
 struct Terrain {}
 
-fn requestor_system(keyboard_input: Res<Input<KeyCode>>, mut game: ResMut<Game>) {
-    if keyboard_input.just_pressed(KeyCode::Space) {
-        game.game_state = GameState::Paused;
-    }
-}
-
 fn slide_terrain(game: Res<Game>, mut tile_position: Query<(&mut Terrain, &mut Transform)>) {
     for (mut _terrain, mut transform) in &mut tile_position {
         transform.translation.x += game.x_position;
         transform.translation.y += game.y_position;
     }
-}
-
-#[derive(Clone, Default, Eq, PartialEq)]
-enum Action {
-    #[default]
-    Running,
-    Attacking,
-    Idle,
 }
 
 #[derive(Component, Clone)]
@@ -191,7 +151,7 @@ fn animate_sprite(
 
 fn keyboard_to_direction<'a>(
     key_events: impl ExactSizeIterator<Item = &'a KeyCode>,
-) -> Option<Direction> {
+) -> Option<agent::Direction> {
     let direction = key_events.fold(0, |acc, key| match key {
         KeyCode::A => acc | 0b0001,
         KeyCode::D => acc | 0b0010,
@@ -201,14 +161,14 @@ fn keyboard_to_direction<'a>(
     });
 
     match direction {
-        0b0001 => Some(Direction::W),
-        0b0010 => Some(Direction::E),
-        0b0100 => Some(Direction::N),
-        0b1000 => Some(Direction::S),
-        0b0101 => Some(Direction::NW),
-        0b0110 => Some(Direction::NE),
-        0b1001 => Some(Direction::SW),
-        0b1010 => Some(Direction::SE),
+        0b0001 => Some(agent::Direction::W),
+        0b0010 => Some(agent::Direction::E),
+        0b0100 => Some(agent::Direction::N),
+        0b1000 => Some(agent::Direction::S),
+        0b0101 => Some(agent::Direction::NW),
+        0b0110 => Some(agent::Direction::NE),
+        0b1001 => Some(agent::Direction::SW),
+        0b1010 => Some(agent::Direction::SE),
         _ => None,
     }
 }
@@ -245,46 +205,7 @@ fn control_player(
     }
 }
 
-fn control_ai(mut query: Query<(&mut AiController, &mut CharacterState)>, time: Res<Time>) {
-    for (mut controller, mut state) in &mut query {
-        controller.ticks_since_last_action += time.delta_seconds();
-
-        let current_ticks = controller.ticks_since_last_action;
-
-        if state.action == Action::Idle && state.direction == Direction::N && current_ticks > 4.0 {
-            state.action = Action::Running;
-            state.direction = Direction::W;
-            controller.ticks_since_last_action = 0.0;
-            continue;
-        } else if state.action == Action::Running
-            && state.direction == Direction::W
-            && current_ticks > 5.0
-        {
-            state.action = Action::Idle;
-            state.direction = Direction::S;
-            controller.ticks_since_last_action = 0.0;
-            continue;
-        }
-        if state.action == Action::Idle && state.direction == Direction::S && current_ticks > 4.0 {
-            state.action = Action::Running;
-            state.direction = Direction::E;
-            controller.ticks_since_last_action = 0.0;
-            continue;
-        } else if state.action == Action::Running
-            && state.direction == Direction::E
-            && current_ticks > 5.0
-        {
-            state.action = Action::Idle;
-            state.direction = Direction::N;
-            controller.ticks_since_last_action = 0.0;
-            continue;
-        }
-    }
-}
-
 fn move_character(mut query: Query<(&mut Transform, &mut CharacterState)>, time: Res<Time>) {
-    // let (mut player_transform, character_state) = query.single_mut();
-
     for (mut player_transform, character_state) in &mut query {
         if character_state.action != Action::Running {
             continue;
@@ -302,17 +223,6 @@ fn move_character(mut query: Query<(&mut Transform, &mut CharacterState)>, time:
 
 #[derive(Component)]
 struct HumanController;
-
-#[derive(Component)]
-struct AiController {
-    ticks_since_last_action: f32,
-}
-
-#[derive(Component, PartialEq, Eq)]
-struct CharacterState {
-    action: Action,
-    direction: Direction,
-}
 
 #[derive(Resource)]
 struct OracleReaderConfig {
@@ -421,7 +331,7 @@ fn setup(
             AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
             CharacterState {
                 action: Action::Idle,
-                direction: Direction::N,
+                direction: agent::Direction::N,
             },
             HumanController {},
         ))
@@ -437,23 +347,9 @@ fn setup(
         });
 
     commands
-        .spawn((
-            SpriteSheetBundle {
-                texture_atlas: character_atlas_handle,
-                sprite: TextureAtlasSprite::new(0),
-                transform: Transform::from_scale(Vec3::splat(2.0))
-                    .with_translation(Vec3::new(300.0, 10.0, 10.00)),
-                ..default()
-            },
-            animation_set,
-            AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
-            CharacterState {
-                action: Action::Idle,
-                direction: Direction::N,
-            },
-            AiController {
-                ticks_since_last_action: 0.0,
-            },
+        .spawn(new_ai_agent_bundle(
+            character_atlas_handle.clone(),
+            animation_set.clone(),
         ))
         .with_children(|parent| {
             parent.spawn(Text2dBundle {
@@ -484,7 +380,6 @@ fn main() {
             Update,
             (
                 animate_sprite,
-                requestor_system,
                 read_oracle,
                 slide_terrain,
                 move_character,
