@@ -44,8 +44,8 @@ impl Conversation {
     }
 }
 
-impl Into<CompletionQuery> for Conversation {
-    fn into(self) -> CompletionQuery {
+impl From<Conversation> for CompletionQuery {
+    fn from(val: Conversation) -> Self {
         ChatBody {
             model: "gpt-3.5-turbo".to_string(),
             max_tokens: None,
@@ -58,7 +58,7 @@ impl Into<CompletionQuery> for Conversation {
             frequency_penalty: None,
             logit_bias: None,
             user: None,
-            messages: self.messages,
+            messages: val.messages,
         }
     }
 }

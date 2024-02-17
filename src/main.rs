@@ -2,8 +2,9 @@ mod agent;
 mod generator;
 mod terrain;
 
+use agent::human::{new_human_agent_bundle, HumanController};
 use agent::npc::{control_ai, new_ai_agent_bundle};
-use agent::{Action, CharacterState};
+use agent::{animate_sprite, make_speech_bubble, move_agent, Action, CharacterState};
 use bevy::prelude::*;
 use bevy::window::WindowMode;
 use generator::{Completer, Conversation};
@@ -112,43 +113,6 @@ struct AnimationIndices {
 #[derive(Component, Deref, DerefMut)]
 struct AnimationTimer(Timer);
 
-fn animate_sprite(
-    time: Res<Time>,
-    mut query: Query<(
-        &AnimationSet,
-        &CharacterState,
-        &mut AnimationTimer,
-        &mut TextureAtlasSprite,
-    )>,
-) {
-    for (anim_set, action_state, mut timer, mut sprite) in &mut query {
-        timer.tick(time.delta());
-        if timer.just_finished() {
-            let direction = action_state.direction.clone();
-            let action = action_state.action.clone();
-
-            let (first, last) = {
-                let indices = match action {
-                    Action::Running => anim_set.running.clone(),
-                    Action::Idle => anim_set.idle.clone(),
-                    Action::Attacking => anim_set.hit.clone(),
-                };
-
-                let offset = (direction as usize) * 24;
-                let first = indices.first + offset;
-                let last = indices.last + offset;
-                (first, last)
-            };
-
-            sprite.index = if sprite.index >= last || sprite.index < first {
-                first
-            } else {
-                sprite.index + 1
-            };
-        }
-    }
-}
-
 fn keyboard_to_direction<'a>(
     key_events: impl ExactSizeIterator<Item = &'a KeyCode>,
 ) -> Option<agent::Direction> {
@@ -204,25 +168,6 @@ fn control_player(
         state.action = Action::Idle;
     }
 }
-
-fn move_character(mut query: Query<(&mut Transform, &mut CharacterState)>, time: Res<Time>) {
-    for (mut player_transform, character_state) in &mut query {
-        if character_state.action != Action::Running {
-            continue;
-        }
-
-        let character_direction = character_state.direction.as_vec();
-        let (x, y) = (character_direction.x, character_direction.y);
-
-        player_transform.translation.x =
-            player_transform.translation.x + x * 170f32 * time.delta_seconds();
-        player_transform.translation.y =
-            player_transform.translation.y + y * 170f32 * time.delta_seconds();
-    }
-}
-
-#[derive(Component)]
-struct HumanController;
 
 #[derive(Resource)]
 struct OracleReaderConfig {
@@ -290,8 +235,6 @@ fn setup(
         font_size: 15.0,
         color: Color::RED,
     };
-    let text_alignment = TextAlignment::Center;
-
     commands.spawn(Camera2dBundle::default());
 
     let scale_factor = 3;
@@ -319,31 +262,12 @@ fn setup(
     }
 
     commands
-        .spawn((
-            SpriteSheetBundle {
-                texture_atlas: character_atlas_handle.clone(),
-                sprite: TextureAtlasSprite::new(0),
-                transform: Transform::from_scale(Vec3::splat(2.0))
-                    .with_translation(Vec3::new(400.0, 10.0, 10.00)),
-                ..default()
-            },
+        .spawn(new_human_agent_bundle(
+            character_atlas_handle.clone(),
             animation_set.clone(),
-            AnimationTimer(Timer::from_seconds(0.1, TimerMode::Repeating)),
-            CharacterState {
-                action: Action::Idle,
-                direction: agent::Direction::N,
-            },
-            HumanController {},
         ))
         .with_children(|parent| {
-            parent.spawn(Text2dBundle {
-                text: Text::from_section("", text_style.clone()).with_alignment(text_alignment),
-                transform: Transform {
-                    translation: Vec3::new(0.0, 50.0, 0.0),
-                    ..default()
-                },
-                ..default()
-            });
+            parent.spawn(make_speech_bubble(text_style.clone()));
         });
 
     commands
@@ -352,14 +276,7 @@ fn setup(
             animation_set.clone(),
         ))
         .with_children(|parent| {
-            parent.spawn(Text2dBundle {
-                text: Text::from_section("", text_style).with_alignment(text_alignment),
-                transform: Transform {
-                    translation: Vec3::new(0.0, 50.0, 0.0),
-                    ..default()
-                },
-                ..default()
-            });
+            parent.spawn(make_speech_bubble(text_style.clone()));
         });
 
     commands.insert_resource(OracleReaderConfig {
@@ -382,7 +299,7 @@ fn main() {
                 animate_sprite,
                 read_oracle,
                 slide_terrain,
-                move_character,
+                move_agent,
                 control_player,
                 control_ai,
             ),
