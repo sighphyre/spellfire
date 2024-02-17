@@ -51,7 +51,6 @@ impl Iterator for TerrainGenerator {
         }
 
         let scale_factor = 3;
-        println!("x: {}, y: {}", x, y);
 
         let rand = rand::thread_rng().sample(rand::distributions::Uniform::new(0, 16));
         let scale = Vec3::new(scale_factor as f32, scale_factor as f32, 2f32);

@@ -38,14 +38,19 @@ pub fn control_ai(
 ) {
     for (mut controller, mut state, children) in &mut query {
         for event in shouts.read() {
-            println!("GOT ME AN EVENT! {:#?}", event.message.clone());
             for child in children.iter() {
                 let mut text = text_query.get_mut(*child).unwrap();
                 text.sections[0].value = "...".to_string();
 
+                if let Some(conversation) = &mut controller.active_converstation.as_mut() {
+                    conversation.next(event.message.clone());
+                } else {
+                    controller.active_converstation = Some(Conversation::new());
+                }
+
                 if let Some(asker) = &game_state.asker {
                     let next_message_prompt: CompletionQuery =
-                        game_state.conversation.clone().into();
+                        controller.active_converstation.clone().unwrap().into();
 
                     asker
                         .send((controller.id, next_message_prompt))

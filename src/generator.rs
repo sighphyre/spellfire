@@ -21,7 +21,7 @@ impl std::fmt::Display for AiError {
 
 pub type CompletionQuery = ChatBody;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Conversation {
     pub messages: Vec<Message>,
 }
@@ -33,7 +33,7 @@ impl Default for Conversation {
 }
 
 impl Conversation {
-    fn new() -> Self {
+    pub fn new() -> Self {
         let initiating_message = Message {
             role: Role::User,
             content: "You are Hamish the sentient skeleton, you're generally relatively grumpy and are short with people who try to interrupt your patrol. Keep your response terse".to_string(),
@@ -42,6 +42,14 @@ impl Conversation {
         Self {
             messages: vec![initiating_message],
         }
+    }
+
+    pub fn next(&mut self, message: String) {
+        let new_message = Message {
+            role: Role::User,
+            content: message.to_string(),
+        };
+        self.messages.push(new_message);
     }
 }
 

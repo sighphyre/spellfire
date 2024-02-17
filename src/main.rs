@@ -7,7 +7,7 @@ use agent::npc::{control_ai, new_ai_agent_bundle, AiController};
 use agent::{animate_sprite, make_speech_bubble, move_agent, Action, CharacterState, Shout};
 use bevy::prelude::*;
 use bevy::window::WindowMode;
-use generator::{Completer, Conversation};
+use generator::Completer;
 use openai_api_rust::{Auth, OpenAI};
 use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, Sender};
@@ -30,7 +30,6 @@ struct Game {
     game_state: GameState,
     asker: Option<Sender<(Uuid, CompletionQuery)>>,
     oracle: Option<Oracle>,
-    conversation: Conversation,
 }
 
 struct Oracle {
@@ -71,7 +70,6 @@ fn default_completer() -> (Sender<(Uuid, CompletionQuery)>, Oracle) {
     //spawn new thread first for our background processing, this is a terrible, terrible idea and needs fixing
     std::thread::spawn(move || loop {
         let query = receive_ask.recv().unwrap();
-        println!("Oooo, got me a query");
         let character = completer.complete(query).expect("Ooops?");
         write_lock
             .write()
