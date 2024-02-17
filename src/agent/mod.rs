@@ -12,10 +12,19 @@ use bevy::{
     transform::components::Transform,
 };
 
-use crate::{AnimationSet, AnimationTimer};
+use crate::AnimationTimer;
 
 pub mod human;
 pub mod npc;
+
+pub const SKELETON: AnimationSet = AnimationSet {
+    running: AnimationIndices { first: 4, last: 11 },
+    idle: AnimationIndices { first: 0, last: 3 },
+    hit: AnimationIndices {
+        first: 12,
+        last: 15,
+    },
+};
 
 #[repr(u8)]
 #[derive(Default, Clone, Eq, PartialEq)]
@@ -37,6 +46,19 @@ pub enum Action {
     Running,
     Attacking,
     Idle,
+}
+
+#[derive(Component, Clone)]
+pub struct AnimationSet {
+    running: AnimationIndices,
+    idle: AnimationIndices,
+    hit: AnimationIndices,
+}
+
+#[derive(Component, Clone)]
+pub struct AnimationIndices {
+    first: usize,
+    last: usize,
 }
 
 #[derive(Component, PartialEq, Eq)]

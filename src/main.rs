@@ -5,10 +5,12 @@ mod terrain;
 
 use agent::human::{new_human_agent_bundle, HumanController};
 use agent::npc::{control_ai, new_ai_agent_bundle};
-use agent::{animate_sprite, make_speech_bubble, move_agent, Action, CharacterState, Shout};
+use agent::{
+    animate_sprite, make_speech_bubble, move_agent, Action, CharacterState, Shout, SKELETON,
+};
 use bevy::prelude::*;
 use bevy::window::WindowMode;
-use oracle::{make_oracle, read_oracle, Oracle, OracleReaderConfig};
+use oracle::{read_oracle, start_oracle, Oracle, OracleReaderConfig};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 use terrain::TerrainGenerator;
@@ -29,19 +31,6 @@ struct Game {
     game_state: GameState,
     asker: Option<Sender<(Uuid, CompletionQuery)>>,
     oracle: Option<Oracle>,
-}
-
-#[derive(Component, Clone)]
-struct AnimationSet {
-    running: AnimationIndices,
-    idle: AnimationIndices,
-    hit: AnimationIndices,
-}
-
-#[derive(Component, Clone)]
-struct AnimationIndices {
-    first: usize,
-    last: usize,
 }
 
 #[derive(Component, Deref, DerefMut)]
@@ -116,7 +105,6 @@ fn text_input(
     }
 
     if kbd.just_pressed(KeyCode::Return) {
-        println!("Sending the following input: {}", &*string);
         megaphone.send(Shout {
             message: string.to_string(),
         });
@@ -150,20 +138,6 @@ fn setup(
 
     let character_atlas_handle = texture_assets.add(character_atlas);
 
-    let idle_animation = AnimationIndices { first: 0, last: 3 };
-
-    let running_animation = AnimationIndices { first: 4, last: 11 };
-    let hit_animation = AnimationIndices {
-        first: 12,
-        last: 15,
-    };
-
-    let animation_set = AnimationSet {
-        running: running_animation,
-        idle: idle_animation,
-        hit: hit_animation,
-    };
-
     let font = asset_server.load("fonts/FiraMono-Medium.ttf");
     let text_style = TextStyle {
         font: font.clone(),
@@ -181,7 +155,7 @@ fn setup(
     commands
         .spawn(new_human_agent_bundle(
             character_atlas_handle.clone(),
-            animation_set.clone(),
+            SKELETON.clone(),
         ))
         .with_children(|parent| {
             parent.spawn(make_speech_bubble(text_style.clone()));
@@ -190,7 +164,7 @@ fn setup(
     commands
         .spawn(new_ai_agent_bundle(
             character_atlas_handle.clone(),
-            animation_set.clone(),
+            SKELETON.clone(),
         ))
         .with_children(|parent| {
             parent.spawn(make_speech_bubble(text_style.clone()));
@@ -201,7 +175,7 @@ fn setup(
     });
 
     game.game_state = GameState::Playing;
-    let (asker, oracle) = make_oracle();
+    let (asker, oracle) = start_oracle();
     game.oracle = Some(oracle);
     game.asker = Some(asker);
 }

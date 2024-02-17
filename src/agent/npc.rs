@@ -17,10 +17,10 @@ use uuid::Uuid;
 
 use crate::{
     generator::{CompletionQuery, Conversation},
-    AnimationSet, AnimationTimer, Game,
+    AnimationTimer, Game,
 };
 
-use super::{Action, CharacterState, Direction, Shout};
+use super::{Action, AnimationSet, CharacterState, Direction, Shout};
 
 #[derive(Component)]
 pub struct AiController {

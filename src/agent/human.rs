@@ -8,9 +8,9 @@ use bevy::{
     transform::components::Transform,
 };
 
-use crate::{AnimationSet, AnimationTimer};
+use crate::AnimationTimer;
 
-use super::{Action, CharacterState, Direction};
+use super::{Action, AnimationSet, CharacterState, Direction};
 
 type HumanAgentBundle = (
     SpriteSheetBundle,

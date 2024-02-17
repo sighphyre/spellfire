@@ -74,7 +74,7 @@ pub fn read_oracle(
     }
 }
 
-pub fn make_oracle() -> (Sender<OracleMessage>, Oracle) {
+pub fn start_oracle() -> (Sender<OracleMessage>, Oracle) {
     let auth = Auth::from_env().unwrap();
     let openai = OpenAI::new(auth, "https://api.openai.com/v1/");
 
