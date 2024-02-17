@@ -1,6 +1,7 @@
 use bevy::{
     ecs::{
         component::Component,
+        event::Event,
         system::{Query, Res},
     },
     math::Vec3,
@@ -104,4 +105,9 @@ pub fn make_speech_bubble(text_style: TextStyle) -> Text2dBundle {
         },
         ..default()
     }
+}
+
+#[derive(Event)]
+pub struct Shout {
+    pub message: String,
 }

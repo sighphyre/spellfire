@@ -3,8 +3,8 @@ mod generator;
 mod terrain;
 
 use agent::human::{new_human_agent_bundle, HumanController};
-use agent::npc::{control_ai, new_ai_agent_bundle};
-use agent::{animate_sprite, make_speech_bubble, move_agent, Action, CharacterState};
+use agent::npc::{control_ai, new_ai_agent_bundle, AiController};
+use agent::{animate_sprite, make_speech_bubble, move_agent, Action, CharacterState, Shout};
 use bevy::prelude::*;
 use bevy::window::WindowMode;
 use generator::{Completer, Conversation};
@@ -28,7 +28,7 @@ enum GameState {
 #[derive(Default, Resource)]
 struct Game {
     game_state: GameState,
-    asker: Option<Sender<CompletionQuery>>,
+    asker: Option<Sender<(Uuid, CompletionQuery)>>,
     oracle: Option<Oracle>,
     conversation: Conversation,
 }
@@ -52,14 +52,16 @@ impl Oracle {
     }
 }
 
-fn default_completer() -> (Sender<CompletionQuery>, Oracle) {
+fn default_completer() -> (Sender<(Uuid, CompletionQuery)>, Oracle) {
     let auth = Auth::from_env().unwrap();
     let openai = OpenAI::new(auth, "https://api.openai.com/v1/");
 
     let completer = Completer { client: openai };
 
-    let (send_ask, receive_ask): (Sender<CompletionQuery>, Receiver<CompletionQuery>) =
-        mpsc::channel();
+    let (send_ask, receive_ask): (
+        Sender<(Uuid, CompletionQuery)>,
+        Receiver<(Uuid, CompletionQuery)>,
+    ) = mpsc::channel();
 
     let queue: VecDeque<(Uuid, String)> = VecDeque::default();
     let lock = Arc::new(std::sync::RwLock::new(queue));
@@ -127,11 +129,10 @@ fn keyboard_to_direction<'a>(
 
 fn control_player(
     keyboard_input: Res<Input<KeyCode>>,
-    game_state: ResMut<Game>,
-    mut query: Query<(&HumanController, &mut CharacterState, &Children)>,
-    mut text_query: Query<&mut Text>,
+    mut query: Query<(&HumanController, &mut CharacterState)>,
+    mut megaphone: EventWriter<Shout>,
 ) {
-    let (mut _controller, mut state, children) = query.single_mut();
+    let (mut _controller, mut state) = query.single_mut();
 
     if let Some(direction) = keyboard_to_direction(keyboard_input.get_pressed()) {
         state.direction = direction;
@@ -141,17 +142,9 @@ fn control_player(
     } else if keyboard_input.pressed(KeyCode::Escape) {
         std::process::exit(0);
     } else if keyboard_input.just_pressed(KeyCode::Return) {
-        for child in children.iter() {
-            let mut text = text_query.get_mut(*child).unwrap();
-            text.sections[0].value = "...".to_string();
-            if let Some(asker) = &game_state.asker {
-                let next_message_prompt: CompletionQuery = game_state.conversation.clone().into();
-
-                asker
-                    .send(next_message_prompt)
-                    .expect("Channel send failed");
-            };
-        }
+        megaphone.send(Shout {
+            message: "Hello, world!".to_string(),
+        });
     } else {
         state.action = Action::Idle;
     }
@@ -166,7 +159,7 @@ fn read_oracle(
     game: ResMut<Game>,
     time: Res<Time>,
     mut config: ResMut<OracleReaderConfig>,
-    player_query: Query<(&HumanController, &Children)>,
+    agent_query: Query<(&AiController, &Children)>,
     mut text_query: Query<&mut Text>,
 ) {
     config.timer.tick(time.delta());
@@ -174,7 +167,7 @@ fn read_oracle(
     if config.timer.finished() {
         if let Some(messages) = game.oracle.as_ref().unwrap().get_messages() {
             for message in messages.iter() {
-                for (_player, children) in &player_query {
+                for (_player, children) in &agent_query {
                     for child in children.iter() {
                         let mut text = text_query.get_mut(*child).unwrap();
                         text.sections[0].value = message.1.to_string();
@@ -225,9 +218,9 @@ fn setup(
     };
     commands.spawn(Camera2dBundle::default());
 
-    let mut terrain_gen = TerrainGenerator::new(10, 10, terrain_atlas_handle.clone());
+    let terrain_gen = TerrainGenerator::new(10, 10, terrain_atlas_handle.clone());
 
-    while let Some(tile) = terrain_gen.next() {
+    for tile in terrain_gen {
         commands.spawn(tile);
     }
 
@@ -262,6 +255,7 @@ fn setup(
 fn main() {
     App::new()
         .init_resource::<Game>()
+        .add_event::<Shout>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,

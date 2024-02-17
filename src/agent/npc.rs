@@ -2,28 +2,58 @@ use bevy::{
     asset::Handle,
     ecs::{
         component::Component,
+        event::EventReader,
         system::{Query, Res},
     },
+    hierarchy::Children,
     math::{Vec2, Vec3},
     prelude::default,
     sprite::{SpriteSheetBundle, TextureAtlas, TextureAtlasSprite},
+    text::Text,
     time::{Time, Timer, TimerMode},
     transform::components::Transform,
 };
+use uuid::Uuid;
 
-use crate::{generator::Conversation, AnimationSet, AnimationTimer};
+use crate::{
+    generator::{CompletionQuery, Conversation},
+    AnimationSet, AnimationTimer, Game,
+};
 
-use super::{Action, CharacterState, Direction};
-
+use super::{Action, CharacterState, Direction, Shout};
 
 #[derive(Component)]
 pub struct AiController {
+    pub id: Uuid,
     pub ticks_since_last_action: f32,
     pub active_converstation: Option<Conversation>,
 }
 
-pub fn control_ai(mut query: Query<(&mut AiController, &mut CharacterState)>, time: Res<Time>) {
-    for (mut controller, mut state) in &mut query {
+pub fn control_ai(
+    mut query: Query<(&mut AiController, &mut CharacterState, &Children)>,
+    time: Res<Time>,
+    mut shouts: EventReader<Shout>,
+    mut text_query: Query<&mut Text>,
+    game_state: Res<Game>,
+) {
+    for (mut controller, mut state, children) in &mut query {
+        for event in shouts.read() {
+            println!("GOT ME AN EVENT! {:#?}", event.message.clone());
+            for child in children.iter() {
+                let mut text = text_query.get_mut(*child).unwrap();
+                text.sections[0].value = "...".to_string();
+
+                if let Some(asker) = &game_state.asker {
+                    let next_message_prompt: CompletionQuery =
+                        game_state.conversation.clone().into();
+
+                    asker
+                        .send((controller.id, next_message_prompt))
+                        .expect("Channel send failed");
+                };
+            }
+        }
+
         controller.ticks_since_last_action += time.delta_seconds();
 
         let current_ticks = controller.ticks_since_last_action;
@@ -101,6 +131,7 @@ pub fn new_ai_agent_bundle(
             direction: Direction::N,
         },
         AiController {
+            id: Uuid::new_v4(),
             ticks_since_last_action: 0.0,
             active_converstation: None,
         },

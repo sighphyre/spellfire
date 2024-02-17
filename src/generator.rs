@@ -1,5 +1,6 @@
 use openai_api_rust::chat::*;
 use openai_api_rust::*;
+use uuid::Uuid;
 
 pub struct Completer {
     pub client: OpenAI,
@@ -64,7 +65,8 @@ impl From<Conversation> for CompletionQuery {
 }
 
 impl Completer {
-    pub fn complete(&self, body: CompletionQuery) -> Result<String, AiError> {
+    pub fn complete(&self, query: (Uuid, CompletionQuery)) -> Result<String, AiError> {
+        let body = query.1;
         let result = self
             .client
             .chat_completion_create(&body)
