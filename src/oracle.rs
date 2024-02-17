@@ -25,6 +25,8 @@ pub struct Oracle {
     pub completion_queue: Arc<RwLock<VecDeque<(Uuid, String)>>>,
 }
 
+pub type OracleMessage = (Uuid, CompletionQuery);
+
 impl Oracle {
     pub fn get_messages(&self) -> Option<Vec<(Uuid, String)>> {
         let mut lock = self.completion_queue.write().unwrap();
@@ -72,16 +74,13 @@ pub fn read_oracle(
     }
 }
 
-pub fn make_oracle() -> (Sender<(Uuid, CompletionQuery)>, Oracle) {
+pub fn make_oracle() -> (Sender<OracleMessage>, Oracle) {
     let auth = Auth::from_env().unwrap();
     let openai = OpenAI::new(auth, "https://api.openai.com/v1/");
 
     let completer = Completer { client: openai };
 
-    let (send_ask, receive_ask): (
-        Sender<(Uuid, CompletionQuery)>,
-        Receiver<(Uuid, CompletionQuery)>,
-    ) = channel();
+    let (send_ask, receive_ask): (Sender<OracleMessage>, Receiver<OracleMessage>) = channel();
 
     let queue: VecDeque<(Uuid, String)> = VecDeque::default();
     let lock = Arc::new(std::sync::RwLock::new(queue));

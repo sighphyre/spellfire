@@ -16,11 +16,12 @@ use uuid::Uuid;
 
 use crate::generator::CompletionQuery;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Eq, PartialEq)]
 enum GameState {
     #[default]
     Loading,
     Playing,
+    Typing,
 }
 
 #[derive(Default, Resource)]
@@ -72,24 +73,62 @@ fn keyboard_to_direction<'a>(
 
 fn control_player(
     keyboard_input: Res<Input<KeyCode>>,
+    game: Res<Game>,
     mut query: Query<(&HumanController, &mut CharacterState)>,
-    mut megaphone: EventWriter<Shout>,
 ) {
-    let (mut _controller, mut state) = query.single_mut();
+    if game.game_state != GameState::Playing {
+        return;
+    }
+
+    let (mut _controller, mut character_state) = query.single_mut();
 
     if let Some(direction) = keyboard_to_direction(keyboard_input.get_pressed()) {
-        state.direction = direction;
-        state.action = Action::Running;
+        character_state.direction = direction;
+        character_state.action = Action::Running;
     } else if keyboard_input.pressed(KeyCode::Space) {
-        state.action = Action::Attacking;
+        character_state.action = Action::Attacking;
     } else if keyboard_input.pressed(KeyCode::Escape) {
         std::process::exit(0);
-    } else if keyboard_input.just_pressed(KeyCode::Return) {
-        megaphone.send(Shout {
-            message: "Hello, world!".to_string(),
-        });
     } else {
-        state.action = Action::Idle;
+        character_state.action = Action::Idle;
+    }
+}
+
+fn toggle_text_input(mut game: ResMut<Game>, kbd: Res<Input<KeyCode>>) {
+    if kbd.just_pressed(KeyCode::Return) {
+        if game.game_state == GameState::Typing {
+            game.game_state = GameState::Playing;
+        } else {
+            game.game_state = GameState::Typing;
+        }
+    }
+}
+
+fn text_input(
+    mut evr_char: EventReader<ReceivedCharacter>,
+    game: ResMut<Game>,
+    kbd: Res<Input<KeyCode>>,
+    mut string: Local<String>,
+    mut megaphone: EventWriter<Shout>,
+) {
+    if game.game_state != GameState::Typing {
+        return;
+    }
+
+    if kbd.just_pressed(KeyCode::Return) {
+        println!("Sending the following input: {}", &*string);
+        megaphone.send(Shout {
+            message: string.to_string(),
+        });
+        string.clear();
+    }
+    if kbd.just_pressed(KeyCode::Back) {
+        string.pop();
+    }
+    for ev in evr_char.read() {
+        if !ev.char.is_control() {
+            string.push(ev.char);
+        }
     }
 }
 
@@ -180,6 +219,8 @@ fn main() {
                 move_agent,
                 control_player,
                 control_ai,
+                toggle_text_input,
+                text_input,
             ),
         )
         .add_plugins(
