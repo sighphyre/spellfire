@@ -7,16 +7,16 @@ use std::{
 };
 
 use bevy::{
-    ecs::system::{Query, Res, ResMut, Resource},
-    hierarchy::Children,
-    text::Text,
+    ecs::{
+        event::{Event, EventWriter},
+        system::{Res, ResMut, Resource},
+    },
     time::{Time, Timer},
 };
 use openai_api_rust::{Auth, OpenAI};
 use uuid::Uuid;
 
 use crate::{
-    agent::npc::AiController,
     generator::{Completer, CompletionQuery},
     Game,
 };
@@ -47,29 +47,26 @@ pub struct OracleReaderConfig {
     pub timer: Timer,
 }
 
+#[derive(Event, Clone, Debug)]
+pub struct CompletionCallback {
+    pub id: Uuid,
+    pub message: String,
+}
+
 pub fn read_oracle(
     game: ResMut<Game>,
     time: Res<Time>,
     mut config: ResMut<OracleReaderConfig>,
-    mut agent_query: Query<(&mut AiController, &Children)>,
-    mut text_query: Query<&mut Text>,
+    mut completion_handler: EventWriter<CompletionCallback>,
 ) {
     config.timer.tick(time.delta());
 
     if config.timer.finished() {
-        if let Some(messages) = game.oracle.as_ref().unwrap().get_messages() {
-            for message in messages.iter() {
-                for (mut agent, children) in &mut agent_query {
-                    if let Some(conversation) = &mut agent.active_converstation.as_mut() {
-                        conversation.input_from_partner(message.1.to_string());
-                    }
-
-                    for child in children.iter() {
-                        let mut text = text_query.get_mut(*child).unwrap();
-                        text.sections[0].value = message.1.to_string();
-                    }
-                }
-            }
+        if let Some(messages) = game.oracle.get_messages() {
+            completion_handler.send(CompletionCallback {
+                id: messages[0].0,
+                message: messages[0].1.clone(),
+            });
         }
     }
 }

@@ -4,13 +4,13 @@ mod oracle;
 mod terrain;
 
 use agent::human::{new_human_agent_bundle, HumanController};
-use agent::npc::{control_ai, new_ai_agent_bundle};
+use agent::npc::{new_ai_agent_bundle, tick_ai};
 use agent::{
     animate_sprite, make_speech_bubble, move_agent, Action, CharacterState, Shout, SKELETON,
 };
 use bevy::prelude::*;
 use bevy::window::WindowMode;
-use oracle::{read_oracle, start_oracle, Oracle, OracleReaderConfig};
+use oracle::{read_oracle, start_oracle, CompletionCallback, Oracle, OracleReaderConfig};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 use terrain::TerrainGenerator;
@@ -26,15 +26,30 @@ enum GameState {
     Typing,
 }
 
-#[derive(Default, Resource)]
+#[derive(Resource)]
 struct Game {
     game_state: GameState,
-    asker: Option<Sender<(Uuid, CompletionQuery)>>,
-    oracle: Option<Oracle>,
+    asker: Sender<(Uuid, CompletionQuery)>,
+    oracle: Oracle,
+}
+
+impl Default for Game {
+    fn default() -> Self {
+        let (asker, oracle) = start_oracle();
+
+        Game {
+            game_state: GameState::Loading,
+            asker,
+            oracle,
+        }
+    }
 }
 
 #[derive(Component, Deref, DerefMut)]
 struct AnimationTimer(Timer);
+
+#[derive(Component, Default)]
+struct InputText;
 
 fn keyboard_to_direction<'a>(
     key_events: impl ExactSizeIterator<Item = &'a KeyCode>,
@@ -98,14 +113,15 @@ fn text_input(
     game: ResMut<Game>,
     kbd: Res<Input<KeyCode>>,
     mut string: Local<String>,
-    mut megaphone: EventWriter<Shout>,
+    mut query: Query<(&InputText, &mut Text)>,
+    mut event_writer: EventWriter<Shout>,
 ) {
     if game.game_state != GameState::Typing {
         return;
     }
 
     if kbd.just_pressed(KeyCode::Return) {
-        megaphone.send(Shout {
+        event_writer.send(Shout {
             message: string.to_string(),
         });
         string.clear();
@@ -117,6 +133,10 @@ fn text_input(
         if !ev.char.is_control() {
             string.push(ev.char);
         }
+    }
+
+    for (_input, mut text) in &mut query {
+        text.sections[0].value = string.to_string();
     }
 }
 
@@ -170,20 +190,37 @@ fn setup(
             parent.spawn(make_speech_bubble(text_style.clone()));
         });
 
+    commands.spawn((
+        TextBundle::from_section(
+            "",
+            TextStyle {
+                font: font.clone(),
+                font_size: 30.0,
+                ..default()
+            },
+        )
+        .with_text_alignment(TextAlignment::Center)
+        .with_style(Style {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(5.0),
+            left: Val::Px(5.0),
+            ..default()
+        }),
+        InputText,
+    ));
+
     commands.insert_resource(OracleReaderConfig {
         timer: Timer::new(Duration::from_secs(1), TimerMode::Repeating),
     });
 
     game.game_state = GameState::Playing;
-    let (asker, oracle) = start_oracle();
-    game.oracle = Some(oracle);
-    game.asker = Some(asker);
 }
 
 fn main() {
     App::new()
         .init_resource::<Game>()
         .add_event::<Shout>()
+        .add_event::<CompletionCallback>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -192,7 +229,7 @@ fn main() {
                 read_oracle,
                 move_agent,
                 control_player,
-                control_ai,
+                tick_ai,
                 toggle_text_input,
                 text_input,
             ),

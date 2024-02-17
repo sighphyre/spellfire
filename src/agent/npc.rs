@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use crate::{
     generator::{CompletionQuery, Conversation},
+    oracle::CompletionCallback,
     AnimationTimer, Game,
 };
 
@@ -27,72 +28,220 @@ pub struct AiController {
     pub id: Uuid,
     pub ticks_since_last_action: f32,
     pub active_converstation: Option<Conversation>,
+    ai_state: AiState,
 }
 
-pub fn control_ai(
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum ConversationState {
+    Opening,
+    Respond(String),
+    WaitingForCompleter,
+    WaitingForPartner,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum AiState {
+    Idle,
+    Patrolling(Action, Direction),
+    Talking(ConversationState, Conversation),
+}
+
+impl AiState {
+    fn next_state(&self, time_since_change: f32, events: Option<Vec<EventType>>) -> Option<Self> {
+        let (player_events, completer_events) = if let Some(events) = events {
+            let (player_events, completer_events): (Vec<EventType>, Vec<EventType>) =
+                events.into_iter().partition(|x| x.is_player());
+
+            let player_events = if !player_events.is_empty() {
+                Some(player_events)
+            } else {
+                None
+            };
+
+            let completer_events = if !completer_events.is_empty() {
+                Some(completer_events)
+            } else {
+                None
+            };
+            (player_events, completer_events)
+        } else {
+            (None, None)
+        };
+
+        let player_messages: Option<Vec<String>> = player_events.map(|events| {
+            events
+                .iter()
+                .filter_map(|event| match event {
+                    EventType::PlayerShout(message) => Some(message.clone()),
+                    _ => None,
+                })
+                .collect()
+        });
+
+        if let Some(messages) = player_messages {
+            let mut convo = Conversation::new();
+            for message in messages {
+                convo.input_from_partner(message);
+            }
+            return Some(AiState::Talking(ConversationState::Opening, convo));
+        }
+
+        match self {
+            AiState::Idle => {
+                if time_since_change > 2.0 {
+                    Some(AiState::Patrolling(Action::Running, Direction::W))
+                } else {
+                    None
+                }
+            }
+            AiState::Patrolling(action, direction) => {
+                if time_since_change > 4.0 {
+                    let next_direction = match direction {
+                        Direction::W => Direction::N,
+                        Direction::N => Direction::E,
+                        Direction::E => Direction::S,
+                        Direction::S => Direction::W,
+                        _ => Direction::N,
+                    };
+                    if *action == Action::Running {
+                        Some(AiState::Patrolling(Action::Idle, next_direction))
+                    } else {
+                        Some(AiState::Patrolling(Action::Running, next_direction))
+                    }
+                } else {
+                    None
+                }
+            }
+            AiState::Talking(state, convo) => match &state {
+                ConversationState::Opening => Some(AiState::Talking(
+                    ConversationState::WaitingForCompleter,
+                    convo.clone(),
+                )),
+
+                ConversationState::WaitingForCompleter => {
+                    if time_since_change > 4.0 {
+                        Some(AiState::Idle)
+                    } else if let Some(completer_events) = completer_events {
+                        let event = completer_events
+                            .first()
+                            .expect("Expected a completer event");
+                        match event {
+                            EventType::CompleterResponse(message) => {
+                                let mut conv = convo.clone();
+
+                                conv.input_from_partner(message.clone());
+
+                                Some(AiState::Talking(
+                                    ConversationState::Respond(message.clone()),
+                                    conv,
+                                ))
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                }
+                ConversationState::Respond(_) => Some(AiState::Talking(
+                    ConversationState::WaitingForPartner,
+                    convo.clone(),
+                )),
+
+                ConversationState::WaitingForPartner => {
+                    if time_since_change > 4.0 {
+                        Some(AiState::Idle)
+                    } else {
+                        None
+                    }
+                }
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+enum EventType {
+    PlayerShout(String),
+    CompleterResponse(String),
+}
+
+impl EventType {
+    pub fn is_player(&self) -> bool {
+        matches!(self, EventType::PlayerShout(_))
+    }
+}
+
+pub fn tick_ai(
     mut query: Query<(&mut AiController, &mut CharacterState, &Children)>,
     time: Res<Time>,
     mut shouts: EventReader<Shout>,
+    mut completion_handler: EventReader<CompletionCallback>,
     mut text_query: Query<&mut Text>,
     game_state: Res<Game>,
 ) {
     for (mut controller, mut state, children) in &mut query {
-        for event in shouts.read() {
-            for child in children.iter() {
-                let mut text = text_query.get_mut(*child).unwrap();
-                text.sections[0].value = "...".to_string();
+        let shout_events = shouts
+            .read()
+            .map(|event| EventType::PlayerShout(event.message.clone()));
 
-                if let Some(conversation) = &mut controller.active_converstation.as_mut() {
-                    conversation.input_from_partner(event.message.clone());
-                } else {
-                    controller.active_converstation = Some(Conversation::new());
-                }
+        let completion_events = completion_handler
+            .read()
+            // .filter(|event| event.id == controller.id)
+            .map(|event| EventType::CompleterResponse(event.message.clone()));
 
-                if let Some(asker) = &game_state.asker {
-                    let conversation = controller.active_converstation.clone().unwrap();
-                    println!("Sending conversation: {:#?}", conversation);
+        let events: Vec<EventType> = shout_events.chain(completion_events).collect();
 
-                    let next_message_prompt: CompletionQuery = conversation.into();
-
-                    asker
-                        .send((controller.id, next_message_prompt))
-                        .expect("Channel send failed");
-                };
-            }
-        }
+        let events = if !events.is_empty() {
+            Some(events)
+        } else {
+            None
+        };
 
         controller.ticks_since_last_action += time.delta_seconds();
 
         let current_ticks = controller.ticks_since_last_action;
 
-        if state.action == Action::Idle && state.direction == Direction::N && current_ticks > 4.0 {
-            state.action = Action::Running;
-            state.direction = Direction::W;
-            controller.ticks_since_last_action = 0.0;
-            continue;
-        } else if state.action == Action::Running
-            && state.direction == Direction::W
-            && current_ticks > 5.0
+        if let Some(new_state) = controller
+            .ai_state
+            .next_state(current_ticks, events.clone())
         {
-            state.action = Action::Idle;
-            state.direction = Direction::S;
+            println!("AI state changed: {:#?}", new_state);
+            controller.ai_state = new_state;
             controller.ticks_since_last_action = 0.0;
-            continue;
         }
-        if state.action == Action::Idle && state.direction == Direction::S && current_ticks > 4.0 {
-            state.action = Action::Running;
-            state.direction = Direction::E;
-            controller.ticks_since_last_action = 0.0;
-            continue;
-        } else if state.action == Action::Running
-            && state.direction == Direction::E
-            && current_ticks > 5.0
-        {
-            state.action = Action::Idle;
-            state.direction = Direction::N;
-            controller.ticks_since_last_action = 0.0;
-            continue;
-        }
+
+        let (action, direction) = match &controller.ai_state {
+            AiState::Idle => (Action::Idle, Direction::S),
+            AiState::Patrolling(action, direction) => (*action, *direction),
+            AiState::Talking(state, conversation) => {
+                match state {
+                    ConversationState::Opening => {
+                        let next_message_prompt: CompletionQuery = conversation.clone().into();
+
+                        let _ = &game_state
+                            .asker
+                            .send((controller.id, next_message_prompt))
+                            .expect("Channel send failed");
+
+                        for child in children.iter() {
+                            let mut text = text_query.get_mut(*child).unwrap();
+                            text.sections[0].value = "...".to_string();
+                        }
+                    }
+                    ConversationState::Respond(message) => {
+                        for child in children.iter() {
+                            let mut text = text_query.get_mut(*child).unwrap();
+                            text.sections[0].value = message.to_string();
+                        }
+                    }
+                    _ => {}
+                };
+                (Action::Idle, Direction::S)
+            }
+        };
+
+        state.action = action;
+        state.direction = direction;
     }
 }
 
@@ -141,6 +290,7 @@ pub fn new_ai_agent_bundle(
             id: Uuid::new_v4(),
             ticks_since_last_action: 0.0,
             active_converstation: None,
+            ai_state: AiState::Patrolling(Action::Idle, Direction::N),
         },
     )
 }

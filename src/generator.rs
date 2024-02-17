@@ -26,6 +26,36 @@ pub struct Conversation {
     pub messages: Vec<Message>,
 }
 
+trait Same {
+    fn eq(&self, other: &Self) -> bool;
+}
+
+impl Same for Role {
+    fn eq(&self, b: &Role) -> bool {
+        matches!(
+            (self, b),
+            (Role::User, Role::User)
+                | (Role::Assistant, Role::Assistant)
+                | (Role::System, Role::System)
+        )
+    }
+}
+
+impl PartialEq for Conversation {
+    fn eq(&self, other: &Self) -> bool {
+        if self.messages.len() != other.messages.len() {
+            return false;
+        }
+
+        self.messages
+            .iter()
+            .zip(other.messages.iter())
+            .all(|(a, b)| a.content == b.content && a.role.eq(&b.role))
+    }
+}
+
+impl Eq for Conversation {}
+
 impl Default for Conversation {
     fn default() -> Self {
         Conversation::new()

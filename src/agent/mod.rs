@@ -27,7 +27,7 @@ pub const SKELETON: AnimationSet = AnimationSet {
 };
 
 #[repr(u8)]
-#[derive(Default, Clone, Eq, PartialEq)]
+#[derive(Default, Clone, Copy, Eq, PartialEq, Debug)]
 pub enum Direction {
     #[default]
     W,
@@ -40,7 +40,7 @@ pub enum Direction {
     SW,
 }
 
-#[derive(Clone, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Debug)]
 pub enum Action {
     #[default]
     Running,
@@ -93,8 +93,8 @@ pub fn animate_sprite(
     for (anim_set, action_state, mut timer, mut sprite) in &mut query {
         timer.tick(time.delta());
         if timer.just_finished() {
-            let direction = action_state.direction.clone();
-            let action = action_state.action.clone();
+            let direction = action_state.direction;
+            let action = action_state.action;
 
             let (first, last) = {
                 let indices = match action {
