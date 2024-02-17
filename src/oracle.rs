@@ -49,7 +49,7 @@ pub fn read_oracle(
     game: ResMut<Game>,
     time: Res<Time>,
     mut config: ResMut<OracleReaderConfig>,
-    agent_query: Query<(&AiController, &Children)>,
+    mut agent_query: Query<(&mut AiController, &Children)>,
     mut text_query: Query<&mut Text>,
 ) {
     config.timer.tick(time.delta());
@@ -57,7 +57,11 @@ pub fn read_oracle(
     if config.timer.finished() {
         if let Some(messages) = game.oracle.as_ref().unwrap().get_messages() {
             for message in messages.iter() {
-                for (_player, children) in &agent_query {
+                for (mut agent, children) in &mut agent_query {
+                    if let Some(conversation) = &mut agent.active_converstation.as_mut() {
+                        conversation.input_from_partner(message.1.to_string());
+                    }
+
                     for child in children.iter() {
                         let mut text = text_query.get_mut(*child).unwrap();
                         text.sections[0].value = message.1.to_string();

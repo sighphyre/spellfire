@@ -43,14 +43,16 @@ pub fn control_ai(
                 text.sections[0].value = "...".to_string();
 
                 if let Some(conversation) = &mut controller.active_converstation.as_mut() {
-                    conversation.next(event.message.clone());
+                    conversation.input_from_partner(event.message.clone());
                 } else {
                     controller.active_converstation = Some(Conversation::new());
                 }
 
                 if let Some(asker) = &game_state.asker {
-                    let next_message_prompt: CompletionQuery =
-                        controller.active_converstation.clone().unwrap().into();
+                    let conversation = controller.active_converstation.clone().unwrap();
+                    println!("Sending conversation: {:#?}", conversation);
+
+                    let next_message_prompt: CompletionQuery = conversation.into();
 
                     asker
                         .send((controller.id, next_message_prompt))

@@ -35,7 +35,7 @@ impl Default for Conversation {
 impl Conversation {
     pub fn new() -> Self {
         let initiating_message = Message {
-            role: Role::User,
+            role: Role::System,
             content: "You are Hamish the sentient skeleton, you're generally relatively grumpy and are short with people who try to interrupt your patrol. Keep your response terse".to_string(),
         };
 
@@ -44,12 +44,20 @@ impl Conversation {
         }
     }
 
-    pub fn next(&mut self, message: String) {
+    fn input(&mut self, message: String, role: Role) {
         let new_message = Message {
-            role: Role::User,
+            role,
             content: message.to_string(),
         };
         self.messages.push(new_message);
+    }
+
+    pub fn input_from_self(&mut self, message: String) {
+        self.input(message, Role::Assistant);
+    }
+
+    pub fn input_from_partner(&mut self, message: String) {
+        self.input(message, Role::User);
     }
 }
 
