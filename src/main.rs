@@ -1,17 +1,15 @@
 mod agent;
 mod generator;
+mod oracle;
 mod terrain;
 
 use agent::human::{new_human_agent_bundle, HumanController};
-use agent::npc::{control_ai, new_ai_agent_bundle, AiController};
+use agent::npc::{control_ai, new_ai_agent_bundle};
 use agent::{animate_sprite, make_speech_bubble, move_agent, Action, CharacterState, Shout};
 use bevy::prelude::*;
 use bevy::window::WindowMode;
-use generator::Completer;
-use openai_api_rust::{Auth, OpenAI};
-use std::collections::VecDeque;
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{mpsc, Arc, RwLock};
+use oracle::{make_oracle, read_oracle, Oracle, OracleReaderConfig};
+use std::sync::mpsc::Sender;
 use std::time::Duration;
 use terrain::TerrainGenerator;
 use uuid::Uuid;
@@ -30,59 +28,6 @@ struct Game {
     game_state: GameState,
     asker: Option<Sender<(Uuid, CompletionQuery)>>,
     oracle: Option<Oracle>,
-}
-
-struct Oracle {
-    completion_queue: Arc<RwLock<VecDeque<(Uuid, String)>>>,
-}
-
-impl Oracle {
-    fn get_messages(&self) -> Option<Vec<(Uuid, String)>> {
-        let mut lock = self.completion_queue.write().unwrap();
-        if lock.is_empty() {
-            None
-        } else {
-            let mut result = Vec::new();
-            while let Some(item) = lock.pop_front() {
-                result.push(item);
-            }
-            Some(result)
-        }
-    }
-}
-
-fn default_completer() -> (Sender<(Uuid, CompletionQuery)>, Oracle) {
-    let auth = Auth::from_env().unwrap();
-    let openai = OpenAI::new(auth, "https://api.openai.com/v1/");
-
-    let completer = Completer { client: openai };
-
-    let (send_ask, receive_ask): (
-        Sender<(Uuid, CompletionQuery)>,
-        Receiver<(Uuid, CompletionQuery)>,
-    ) = mpsc::channel();
-
-    let queue: VecDeque<(Uuid, String)> = VecDeque::default();
-    let lock = Arc::new(std::sync::RwLock::new(queue));
-
-    let write_lock = lock.clone();
-
-    //spawn new thread first for our background processing, this is a terrible, terrible idea and needs fixing
-    std::thread::spawn(move || loop {
-        let query = receive_ask.recv().unwrap();
-        let character = completer.complete(query).expect("Ooops?");
-        write_lock
-            .write()
-            .unwrap()
-            .push_back((Uuid::new_v4(), character));
-    });
-
-    (
-        send_ask,
-        Oracle {
-            completion_queue: lock,
-        },
-    )
 }
 
 #[derive(Component, Clone)]
@@ -145,34 +90,6 @@ fn control_player(
         });
     } else {
         state.action = Action::Idle;
-    }
-}
-
-#[derive(Resource)]
-struct OracleReaderConfig {
-    timer: Timer,
-}
-
-fn read_oracle(
-    game: ResMut<Game>,
-    time: Res<Time>,
-    mut config: ResMut<OracleReaderConfig>,
-    agent_query: Query<(&AiController, &Children)>,
-    mut text_query: Query<&mut Text>,
-) {
-    config.timer.tick(time.delta());
-
-    if config.timer.finished() {
-        if let Some(messages) = game.oracle.as_ref().unwrap().get_messages() {
-            for message in messages.iter() {
-                for (_player, children) in &agent_query {
-                    for child in children.iter() {
-                        let mut text = text_query.get_mut(*child).unwrap();
-                        text.sections[0].value = message.1.to_string();
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -245,7 +162,7 @@ fn setup(
     });
 
     game.game_state = GameState::Playing;
-    let (asker, oracle) = default_completer();
+    let (asker, oracle) = make_oracle();
     game.oracle = Some(oracle);
     game.asker = Some(asker);
 }
