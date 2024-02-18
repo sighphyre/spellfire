@@ -8,6 +8,7 @@ use agent::npc::{new_ai_agent_bundle, tick_ai};
 use agent::{
     animate_sprite, make_speech_bubble, move_agent, Action, CharacterState, Shout, SKELETON,
 };
+
 use bevy::prelude::*;
 use bevy::window::WindowMode;
 use oracle::{read_oracle, start_oracle, CompletionCallback, Oracle, OracleReaderConfig};
@@ -31,6 +32,7 @@ struct Game {
     game_state: GameState,
     asker: Sender<(Uuid, CompletionQuery)>,
     oracle: Oracle,
+    const_assets: Option<GameAssets>,
 }
 
 impl Default for Game {
@@ -41,6 +43,7 @@ impl Default for Game {
             game_state: GameState::Loading,
             asker,
             oracle,
+            const_assets: None,
         }
     }
 }
@@ -78,6 +81,7 @@ fn keyboard_to_direction<'a>(
 fn control_player(
     keyboard_input: Res<Input<KeyCode>>,
     game: Res<Game>,
+    mut commands: Commands,
     mut query: Query<(&HumanController, &mut CharacterState)>,
 ) {
     if game.game_state != GameState::Playing {
@@ -93,6 +97,27 @@ fn control_player(
         character_state.action = Action::Attacking;
     } else if keyboard_input.pressed(KeyCode::Escape) {
         std::process::exit(0);
+    } else if keyboard_input.just_pressed(KeyCode::L) {
+        let character_atlas_handle = game
+            .const_assets
+            .as_ref()
+            .map(|assets| assets.character_atlas.clone())
+            .unwrap();
+
+        let text_style = game
+            .const_assets
+            .as_ref()
+            .map(|assets| assets.text_style.clone())
+            .unwrap();
+
+        commands
+            .spawn(new_ai_agent_bundle(
+                character_atlas_handle.clone(),
+                SKELETON.clone(),
+            ))
+            .with_children(|parent| {
+                parent.spawn(make_speech_bubble(text_style.clone()));
+            });
     } else {
         character_state.action = Action::Idle;
     }
@@ -104,6 +129,34 @@ fn toggle_text_input(mut game: ResMut<Game>, kbd: Res<Input<KeyCode>>) {
             game.game_state = GameState::Playing;
         } else {
             game.game_state = GameState::Typing;
+        }
+    }
+}
+
+fn handle_mouse(
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+    windows: Query<&Window>,
+    buttons: Res<Input<MouseButton>>,
+    q_sprites: Query<(Entity, &Transform, &CharacterState)>,
+) {
+    if buttons.just_pressed(MouseButton::Left) {
+        let (camera, camera_transform) = camera_query.single();
+
+        let Some(cursor_position) = windows.single().cursor_position() else {
+            return;
+        };
+
+        let Some(point) = camera.viewport_to_world_2d(camera_transform, cursor_position) else {
+            return;
+        };
+
+        for (_entity, transform, _sprite) in q_sprites.iter() {
+            let min = transform.translation.truncate() - Vec2::new(128.0, 64.0);
+            let max = transform.translation.truncate() + Vec2::new(128.0, 64.0);
+
+            if point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y {
+                println!("Clicked an entity");
+            }
         }
     }
 }
@@ -140,6 +193,11 @@ fn text_input(
     for (_input, mut text) in &mut query {
         text.sections[0].value = string.to_string();
     }
+}
+
+struct GameAssets {
+    text_style: TextStyle,
+    character_atlas: Handle<TextureAtlas>,
 }
 
 fn setup(
@@ -183,15 +241,6 @@ fn setup(
             parent.spawn(make_speech_bubble(text_style.clone()));
         });
 
-    commands
-        .spawn(new_ai_agent_bundle(
-            character_atlas_handle.clone(),
-            SKELETON.clone(),
-        ))
-        .with_children(|parent| {
-            parent.spawn(make_speech_bubble(text_style.clone()));
-        });
-
     commands.spawn((
         TextBundle::from_section(
             "",
@@ -215,6 +264,11 @@ fn setup(
         timer: Timer::new(Duration::from_secs(1), TimerMode::Repeating),
     });
 
+    game.const_assets = Some(GameAssets {
+        text_style: text_style.clone(),
+        character_atlas: character_atlas_handle,
+    });
+
     game.game_state = GameState::Playing;
 }
 
@@ -230,10 +284,9 @@ fn main() {
                 animate_sprite,
                 read_oracle,
                 move_agent,
-                control_player,
                 tick_ai,
-                toggle_text_input,
-                text_input,
+                (text_input, control_player, toggle_text_input),
+                handle_mouse,
             ),
         )
         .add_plugins(
