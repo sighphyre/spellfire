@@ -87,11 +87,9 @@ pub fn start_oracle() -> (Sender<OracleMessage>, Oracle) {
     //spawn new thread first for our background processing, this is a terrible, terrible idea and needs fixing
     std::thread::spawn(move || loop {
         let query = receive_ask.recv().unwrap();
+        let id = query.0;
         let character = completer.complete(query).expect("Ooops?");
-        write_lock
-            .write()
-            .unwrap()
-            .push_back((Uuid::new_v4(), character));
+        write_lock.write().unwrap().push_back((id, character));
     });
 
     (

@@ -50,8 +50,8 @@ impl AiState {
         let player_messages: Option<Vec<String>> = interrupts.map(|events| {
             events
                 .iter()
-                .filter_map(|event| match event {
-                    EventType::PlayerShout(message) => Some(message.clone()),
+                .map(|event| match event {
+                    EventType::PlayerShout(message) => message.clone(),
                 })
                 .collect()
         });
@@ -154,8 +154,11 @@ pub fn tick_ai(
 
         let completion_events = completion_handler
             .read()
-            // .filter(|event| event.id == controller.id)
-            .map(|event| Callback::CompleterResponse(event.message.clone()))
+            .filter(|event| event.id == controller.id)
+            .map(|event| {
+                println!("Completions: {:#?} and id {:#?}", event, controller.id);
+                Callback::CompleterResponse(event.message.clone())
+            })
             .collect::<Vec<Callback>>();
 
         controller.ticks_since_last_action += time.delta_seconds();
