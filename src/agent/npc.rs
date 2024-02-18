@@ -15,11 +15,7 @@ use bevy::{
 };
 use uuid::Uuid;
 
-use crate::{
-    generator::{CompletionQuery, Conversation},
-    oracle::CompletionCallback,
-    AnimationTimer, Game,
-};
+use crate::{generator::Conversation, oracle::CompletionCallback, AnimationTimer, Game};
 
 use super::{Action, AnimationSet, CharacterState, Direction, Shout};
 
@@ -33,8 +29,6 @@ pub struct AiController {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum ConversationState {
-    Opening,
-    Respond(String),
     WaitingForCompleter,
     WaitingForPartner,
 }
@@ -43,37 +37,21 @@ enum ConversationState {
 enum AiState {
     Idle,
     Patrolling(Action, Direction),
-    Talking(ConversationState, Conversation),
+    Talking(ConversationState),
 }
 
 impl AiState {
-    fn next_state(&self, time_since_change: f32, events: Option<Vec<EventType>>) -> Option<Self> {
-        let (player_events, completer_events) = if let Some(events) = events {
-            let (player_events, completer_events): (Vec<EventType>, Vec<EventType>) =
-                events.into_iter().partition(|x| x.is_player());
-
-            let player_events = if !player_events.is_empty() {
-                Some(player_events)
-            } else {
-                None
-            };
-
-            let completer_events = if !completer_events.is_empty() {
-                Some(completer_events)
-            } else {
-                None
-            };
-            (player_events, completer_events)
-        } else {
-            (None, None)
-        };
-
-        let player_messages: Option<Vec<String>> = player_events.map(|events| {
+    fn next_state(
+        &self,
+        time_since_change: f32,
+        interrupts: Option<Vec<EventType>>,
+        callbacks: Option<Vec<Callback>>,
+    ) -> Option<Self> {
+        let player_messages: Option<Vec<String>> = interrupts.map(|events| {
             events
                 .iter()
                 .filter_map(|event| match event {
                     EventType::PlayerShout(message) => Some(message.clone()),
-                    _ => None,
                 })
                 .collect()
         });
@@ -83,7 +61,7 @@ impl AiState {
             for message in messages {
                 convo.input_from_partner(message);
             }
-            return Some(AiState::Talking(ConversationState::Opening, convo));
+            return Some(AiState::Talking(ConversationState::WaitingForCompleter));
         }
 
         match self {
@@ -112,43 +90,26 @@ impl AiState {
                     None
                 }
             }
-            AiState::Talking(state, convo) => match &state {
-                ConversationState::Opening => Some(AiState::Talking(
-                    ConversationState::WaitingForCompleter,
-                    convo.clone(),
-                )),
-
+            AiState::Talking(state) => match &state {
                 ConversationState::WaitingForCompleter => {
                     if time_since_change > 4.0 {
                         Some(AiState::Idle)
-                    } else if let Some(completer_events) = completer_events {
+                    } else if let Some(completer_events) = callbacks {
                         let event = completer_events
                             .first()
                             .expect("Expected a completer event");
                         match event {
-                            EventType::CompleterResponse(message) => {
-                                let mut conv = convo.clone();
-
-                                conv.input_from_partner(message.clone());
-
-                                Some(AiState::Talking(
-                                    ConversationState::Respond(message.clone()),
-                                    conv,
-                                ))
+                            Callback::CompleterResponse(_message) => {
+                                Some(AiState::Talking(ConversationState::WaitingForPartner))
                             }
-                            _ => None,
                         }
                     } else {
                         None
                     }
                 }
-                ConversationState::Respond(_) => Some(AiState::Talking(
-                    ConversationState::WaitingForPartner,
-                    convo.clone(),
-                )),
 
                 ConversationState::WaitingForPartner => {
-                    if time_since_change > 4.0 {
+                    if time_since_change > 2.0 {
                         Some(AiState::Idle)
                     } else {
                         None
@@ -162,12 +123,18 @@ impl AiState {
 #[derive(Clone, Debug)]
 enum EventType {
     PlayerShout(String),
+}
+
+#[derive(Clone, Debug)]
+enum Callback {
     CompleterResponse(String),
 }
 
-impl EventType {
-    pub fn is_player(&self) -> bool {
-        matches!(self, EventType::PlayerShout(_))
+fn to_option<T>(vec: Vec<T>) -> Option<Vec<T>> {
+    if vec.is_empty() {
+        None
+    } else {
+        Some(vec)
     }
 }
 
@@ -182,66 +149,88 @@ pub fn tick_ai(
     for (mut controller, mut state, children) in &mut query {
         let shout_events = shouts
             .read()
-            .map(|event| EventType::PlayerShout(event.message.clone()));
+            .map(|event| EventType::PlayerShout(event.message.clone()))
+            .collect::<Vec<EventType>>();
 
         let completion_events = completion_handler
             .read()
             // .filter(|event| event.id == controller.id)
-            .map(|event| EventType::CompleterResponse(event.message.clone()));
-
-        let events: Vec<EventType> = shout_events.chain(completion_events).collect();
-
-        let events = if !events.is_empty() {
-            Some(events)
-        } else {
-            None
-        };
+            .map(|event| Callback::CompleterResponse(event.message.clone()))
+            .collect::<Vec<Callback>>();
 
         controller.ticks_since_last_action += time.delta_seconds();
 
         let current_ticks = controller.ticks_since_last_action;
 
-        if let Some(new_state) = controller
-            .ai_state
-            .next_state(current_ticks, events.clone())
-        {
+        if let Some(new_state) = controller.ai_state.next_state(
+            current_ticks,
+            to_option(shout_events.clone()),
+            to_option(completion_events.clone()),
+        ) {
             println!("AI state changed: {:#?}", new_state);
             controller.ai_state = new_state;
             controller.ticks_since_last_action = 0.0;
+
+            let (action, direction) = match &controller.ai_state {
+                AiState::Idle => (Action::Idle, Direction::S),
+                AiState::Patrolling(action, direction) => (*action, *direction),
+                AiState::Talking(state) => {
+                    let mut conversation =
+                        if let Some(conversation) = &controller.active_converstation {
+                            conversation.clone()
+                        } else {
+                            Conversation::new()
+                        };
+
+                    let character_float_text = match state {
+                        ConversationState::WaitingForCompleter => {
+                            for event in shout_events {
+                                match event {
+                                    EventType::PlayerShout(message) => {
+                                        conversation.input_from_partner(message);
+                                    }
+                                }
+                            }
+
+                            let next_message_prompt = conversation.clone().into();
+
+                            let _ = &game_state
+                                .asker
+                                .send((controller.id, next_message_prompt))
+                                .expect("Channel send failed");
+
+                            "...".to_string()
+                        }
+                        ConversationState::WaitingForPartner => {
+                            let mut last_message = "".to_string();
+                            for event in completion_events {
+                                match event {
+                                    Callback::CompleterResponse(message) => {
+                                        last_message = message.clone();
+                                        conversation.input_from_self(message);
+                                    }
+                                }
+                            }
+                            last_message.to_string()
+                        }
+                    };
+
+                    println!("AI: {:#?}", conversation.messages);
+
+                    controller.active_converstation = Some(conversation);
+
+                    for child in children.iter() {
+                        let mut text = text_query.get_mut(*child).unwrap();
+                        text.sections[0].value = character_float_text.clone();
+                    }
+
+                    (Action::Idle, Direction::S)
+                }
+            };
+
+            state.action = action;
+            state.direction = direction;
         }
-
-        let (action, direction) = match &controller.ai_state {
-            AiState::Idle => (Action::Idle, Direction::S),
-            AiState::Patrolling(action, direction) => (*action, *direction),
-            AiState::Talking(state, conversation) => {
-                match state {
-                    ConversationState::Opening => {
-                        let next_message_prompt: CompletionQuery = conversation.clone().into();
-
-                        let _ = &game_state
-                            .asker
-                            .send((controller.id, next_message_prompt))
-                            .expect("Channel send failed");
-
-                        for child in children.iter() {
-                            let mut text = text_query.get_mut(*child).unwrap();
-                            text.sections[0].value = "...".to_string();
-                        }
-                    }
-                    ConversationState::Respond(message) => {
-                        for child in children.iter() {
-                            let mut text = text_query.get_mut(*child).unwrap();
-                            text.sections[0].value = message.to_string();
-                        }
-                    }
-                    _ => {}
-                };
-                (Action::Idle, Direction::S)
-            }
-        };
-
-        state.action = action;
-        state.direction = direction;
     }
 }
 

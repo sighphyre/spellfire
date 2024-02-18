@@ -121,9 +121,11 @@ fn text_input(
     }
 
     if kbd.just_pressed(KeyCode::Return) {
-        event_writer.send(Shout {
-            message: string.to_string(),
-        });
+        let message = string.to_string();
+        if message.trim().is_empty() {
+            return;
+        }
+        event_writer.send(Shout { message });
         string.clear();
     }
     if kbd.just_pressed(KeyCode::Back) {
