@@ -4,7 +4,7 @@ use bevy::{
         event::Event,
         system::{Query, Res},
     },
-    math::Vec3,
+    math::{Vec2, Vec3},
     prelude::default,
     sprite::TextureAtlasSprite,
     text::{Text, Text2dBundle, TextAlignment, TextStyle},
@@ -65,6 +65,21 @@ pub struct AnimationIndices {
 pub struct CharacterState {
     pub action: Action,
     pub direction: Direction,
+}
+
+impl Direction {
+    pub fn as_vec(&self) -> Vec2 {
+        match self {
+            Direction::W => Vec2::new(-1.0, 0.0),
+            Direction::NW => Vec2::new(-0.7, 0.7),
+            Direction::N => Vec2::new(0.0, 1.0),
+            Direction::NE => Vec2::new(0.7, 0.7),
+            Direction::E => Vec2::new(1.0, 0.0),
+            Direction::SE => Vec2::new(0.7, -0.7),
+            Direction::S => Vec2::new(0.0, -1.0),
+            Direction::SW => Vec2::new(-0.7, -0.7),
+        }
+    }
 }
 
 pub fn move_agent(mut query: Query<(&mut Transform, &mut CharacterState)>, time: Res<Time>) {

@@ -6,7 +6,7 @@ use bevy::{
         system::{Query, Res},
     },
     hierarchy::Children,
-    math::{Vec2, Vec3},
+    math::Vec3,
     prelude::default,
     sprite::{SpriteSheetBundle, TextureAtlas, TextureAtlasSprite},
     text::Text,
@@ -233,21 +233,6 @@ pub fn tick_ai(
 
             state.action = action;
             state.direction = direction;
-        }
-    }
-}
-
-impl Direction {
-    pub fn as_vec(&self) -> Vec2 {
-        match self {
-            Direction::W => Vec2::new(-1.0, 0.0),
-            Direction::NW => Vec2::new(-0.7, 0.7),
-            Direction::N => Vec2::new(0.0, 1.0),
-            Direction::NE => Vec2::new(0.7, 0.7),
-            Direction::E => Vec2::new(1.0, 0.0),
-            Direction::SE => Vec2::new(0.7, -0.7),
-            Direction::S => Vec2::new(0.0, -1.0),
-            Direction::SW => Vec2::new(-0.7, -0.7),
         }
     }
 }
