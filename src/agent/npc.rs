@@ -237,7 +237,7 @@ pub fn tick_ai(
     }
 }
 
-type AiAgentBundle = (
+pub type AiAgentBundle = (
     SpriteSheetBundle,
     AnimationSet,
     AnimationTimer,

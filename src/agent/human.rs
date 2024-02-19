@@ -12,7 +12,7 @@ use crate::AnimationTimer;
 
 use super::{Action, AnimationSet, CharacterState, Direction};
 
-type HumanAgentBundle = (
+pub type HumanAgentBundle = (
     SpriteSheetBundle,
     AnimationSet,
     AnimationTimer,

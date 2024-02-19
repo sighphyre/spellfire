@@ -1,10 +1,11 @@
 mod agent;
 mod generator;
 mod oracle;
+mod spell;
 mod terrain;
 
-use agent::human::{new_human_agent_bundle, HumanController};
-use agent::npc::{new_ai_agent_bundle, tick_ai};
+use agent::human::{new_human_agent_bundle, HumanAgentBundle, HumanController};
+use agent::npc::{new_ai_agent_bundle, tick_ai, AiAgentBundle};
 use agent::{
     animate_sprite, make_speech_bubble, move_agent, Action, CharacterState, Shout, SKELETON,
 };
@@ -12,6 +13,9 @@ use agent::{
 use bevy::prelude::*;
 use bevy::window::WindowMode;
 use oracle::{read_oracle, start_oracle, CompletionCallback, Oracle, OracleReaderConfig};
+use spell::{
+    animate_blob, create_spell, new_matter_blob_bundle, update_spell, MatterBlobBundleBundle, Spell,
+};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 use terrain::TerrainGenerator;
@@ -32,7 +36,7 @@ struct Game {
     game_state: GameState,
     asker: Sender<(Uuid, CompletionQuery)>,
     oracle: Oracle,
-    const_assets: Option<GameAssets>,
+    entity_factory: Option<EntityFactory>,
 }
 
 impl Default for Game {
@@ -43,7 +47,7 @@ impl Default for Game {
             game_state: GameState::Loading,
             asker,
             oracle,
-            const_assets: None,
+            entity_factory: None,
         }
     }
 }
@@ -98,26 +102,18 @@ fn control_player(
     } else if keyboard_input.pressed(KeyCode::Escape) {
         std::process::exit(0);
     } else if keyboard_input.just_pressed(KeyCode::L) {
-        let character_atlas_handle = game
-            .const_assets
+        let ai_bundle = game
+            .entity_factory
             .as_ref()
-            .map(|assets| assets.character_atlas.clone())
-            .unwrap();
+            .map(|factory| factory.make_ai());
 
-        let text_style = game
-            .const_assets
-            .as_ref()
-            .map(|assets| assets.text_style.clone())
-            .unwrap();
+        let Some((bundle, text)) = ai_bundle else {
+            return;
+        };
 
-        commands
-            .spawn(new_ai_agent_bundle(
-                character_atlas_handle.clone(),
-                SKELETON.clone(),
-            ))
-            .with_children(|parent| {
-                parent.spawn(make_speech_bubble(text_style.clone()));
-            });
+        commands.spawn(bundle).with_children(|parent| {
+            parent.spawn(text);
+        });
     } else {
         character_state.action = Action::Idle;
     }
@@ -195,9 +191,100 @@ fn text_input(
     }
 }
 
-struct GameAssets {
-    text_style: TextStyle,
-    character_atlas: Handle<TextureAtlas>,
+struct EntityFactory {
+    constructed_assets: ConstructedAssets,
+}
+
+struct NamedAssets {
+    pub character: Handle<Image>,
+    pub fire: Handle<Image>,
+    pub rock: Handle<Image>,
+    pub font: Handle<Font>,
+}
+
+struct ConstructedAssets {
+    pub character_atlas: Handle<TextureAtlas>,
+    pub fire_atlas: Handle<TextureAtlas>,
+    pub rock_atlas: Handle<TextureAtlas>,
+    pub text_style: TextStyle,
+}
+
+impl EntityFactory {
+    fn new(named_assets: NamedAssets, mut texture_assets: ResMut<Assets<TextureAtlas>>) -> Self {
+        let character_atlas = TextureAtlas::from_grid(
+            named_assets.character.clone(),
+            Vec2::new(128.0, 128.0),
+            24,
+            8,
+            None,
+            None,
+        );
+
+        let character_atlas_handle = texture_assets.add(character_atlas);
+
+        let fire_atlas = TextureAtlas::from_grid(
+            named_assets.fire.clone(),
+            Vec2::new(32.0, 32.0),
+            3,
+            1,
+            None,
+            None,
+        );
+
+        let fire_atlas_handle = texture_assets.add(fire_atlas);
+
+        let rock_atlas = TextureAtlas::from_grid(
+            named_assets.rock.clone(),
+            Vec2::new(32.0, 32.0),
+            5,
+            1,
+            None,
+            None,
+        );
+
+        let rock_atlas_handle = texture_assets.add(rock_atlas);
+
+        let constructed_assets = ConstructedAssets {
+            character_atlas: character_atlas_handle,
+            rock_atlas: rock_atlas_handle.clone(),
+            fire_atlas: fire_atlas_handle,
+            text_style: TextStyle {
+                font: named_assets.font.clone(),
+                font_size: 15.0,
+                color: Color::RED,
+            },
+        };
+
+        EntityFactory { constructed_assets }
+    }
+
+    fn make_human(&self) -> (HumanAgentBundle, Text2dBundle) {
+        (
+            new_human_agent_bundle(
+                self.constructed_assets.character_atlas.clone(),
+                SKELETON.clone(),
+            ),
+            make_speech_bubble(self.constructed_assets.text_style.clone()),
+        )
+    }
+
+    fn make_ai(&self) -> (AiAgentBundle, Text2dBundle) {
+        (
+            new_ai_agent_bundle(
+                self.constructed_assets.character_atlas.clone(),
+                SKELETON.clone(),
+            ),
+            make_speech_bubble(self.constructed_assets.text_style.clone()),
+        )
+    }
+
+    fn make_rock(&self) -> MatterBlobBundleBundle {
+        new_matter_blob_bundle(self.constructed_assets.rock_atlas.clone(), SKELETON.clone())
+    }
+
+    fn make_fire(&self) -> MatterBlobBundleBundle {
+        new_matter_blob_bundle(self.constructed_assets.fire_atlas.clone(), SKELETON.clone())
+    }
 }
 
 fn setup(
@@ -206,40 +293,43 @@ fn setup(
     mut game: ResMut<Game>,
     mut texture_assets: ResMut<Assets<TextureAtlas>>,
 ) {
-    let terrain_handle = asset_server.load("map.png");
-    let terrain_atlas =
-        TextureAtlas::from_grid(terrain_handle, Vec2::new(64.0, 32.0), 16, 2, None, None);
-    let terrain_atlas_handle = texture_assets.add(terrain_atlas);
-
-    let character_handle = asset_server.load("skeleton_0.png");
-
-    let character_atlas =
-        TextureAtlas::from_grid(character_handle, Vec2::new(128.0, 128.0), 24, 8, None, None);
-
-    let character_atlas_handle = texture_assets.add(character_atlas);
-
-    let font = asset_server.load("fonts/FiraMono-Medium.ttf");
-    let text_style = TextStyle {
-        font: font.clone(),
-        font_size: 15.0,
-        color: Color::RED,
-    };
     commands.spawn(Camera2dBundle::default());
 
+    let terrain_handle = asset_server.load("map.png");
+    let terrain_atlas = TextureAtlas::from_grid(
+        terrain_handle.clone(),
+        Vec2::new(64.0, 32.0),
+        16,
+        2,
+        None,
+        None,
+    );
+    let terrain_atlas_handle = texture_assets.add(terrain_atlas);
     let terrain_gen = TerrainGenerator::new(10, 10, terrain_atlas_handle.clone());
 
     for tile in terrain_gen {
         commands.spawn(tile);
     }
 
-    commands
-        .spawn(new_human_agent_bundle(
-            character_atlas_handle.clone(),
-            SKELETON.clone(),
-        ))
-        .with_children(|parent| {
-            parent.spawn(make_speech_bubble(text_style.clone()));
-        });
+    let character_handle = asset_server.load("skeleton_0.png");
+    let fire_handle = asset_server.load("fireball.png");
+    let rock_handle = asset_server.load("rock.png");
+    let font = asset_server.load("fonts/FiraMono-Medium.ttf");
+
+    let assets = NamedAssets {
+        character: character_handle.clone(),
+        fire: fire_handle.clone(),
+        rock: rock_handle.clone(),
+        font: font.clone(),
+    };
+
+    let entity_factory = EntityFactory::new(assets, texture_assets);
+
+    let (human_bundle, text_bubble) = entity_factory.make_human();
+
+    commands.spawn(human_bundle).with_children(|parent| {
+        parent.spawn(text_bubble);
+    });
 
     commands.spawn((
         TextBundle::from_section(
@@ -260,14 +350,13 @@ fn setup(
         InputText,
     ));
 
+    commands.spawn(create_spell());
+
     commands.insert_resource(OracleReaderConfig {
         timer: Timer::new(Duration::from_secs(1), TimerMode::Repeating),
     });
 
-    game.const_assets = Some(GameAssets {
-        text_style: text_style.clone(),
-        character_atlas: character_atlas_handle,
-    });
+    game.entity_factory = Some(entity_factory);
 
     game.game_state = GameState::Playing;
 }
@@ -282,11 +371,13 @@ fn main() {
             Update,
             (
                 animate_sprite,
+                update_spell,
                 read_oracle,
                 move_agent,
                 tick_ai,
                 (text_input, control_player, toggle_text_input),
                 handle_mouse,
+                animate_blob,
             ),
         )
         .add_plugins(
