@@ -361,36 +361,78 @@ fn setup(
     game.game_state = GameState::Playing;
 }
 
+use std::f32::consts::PI;
+
+use bevy::{
+    prelude::*,
+    render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+};
+
 fn main() {
     App::new()
-        .init_resource::<Game>()
-        .add_event::<Shout>()
-        .add_event::<CompletionCallback>()
-        .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            (
-                animate_sprite,
-                update_spell,
-                read_oracle,
-                move_agent,
-                tick_ai,
-                (text_input, control_player, toggle_text_input),
-                handle_mouse,
-                animate_blob,
-            ),
-        )
-        .add_plugins(
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        resizable: true,
-                        mode: WindowMode::BorderlessFullscreen,
-                        ..default()
-                    }),
-                    ..default()
-                })
-                .set(ImagePlugin::default_nearest()),
-        )
+        .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
+        .add_systems(Startup, setup2)
+        .add_systems(Update, setup_scene_once_loaded)
         .run();
+}
+
+// Once the scene is loaded, start the animation
+fn setup_scene_once_loaded(
+    animations: Res<Animations>,
+    mut players: Query<&mut AnimationPlayer, Added<AnimationPlayer>>,
+) {
+    for mut player in &mut players {
+        println!("DOING THE THING");
+        player.play(animations.0[0].clone_weak()).repeat();
+    }
+}
+
+#[derive(Resource)]
+struct Animations(Vec<Handle<AnimationClip>>);
+
+fn setup2(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
+
+    let name = "human.glb";
+
+    commands.insert_resource(Animations(vec![asset_server.load(format!("{name}#Animation0"))]));
+    let my_gltf = asset_server.load(format!("{name}#Scene0"));
+
+    // note that we have to include the `Scene0` label
+
+    // to position our 3d model, simply use the Transform
+    // in the SceneBundle
+    commands.spawn(SceneBundle {
+        scene: my_gltf,
+        // transform: Transform::from_xyz(1.0, 0.0, 1.0),
+        ..Default::default()
+    });
+
+    commands.spawn(PointLightBundle {
+        point_light: PointLight {
+            intensity: 9000.0,
+            range: 100.,
+            shadows_enabled: true,
+            ..default()
+        },
+        transform: Transform::from_xyz(8.0, 16.0, 8.0),
+        ..default()
+    });
+
+    // ground plane
+    commands.spawn(PbrBundle {
+        mesh: meshes.add(shape::Plane::from_size(50.0).into()),
+        material: materials.add(Color::SILVER.into()),
+        ..default()
+    });
+
+    commands.spawn(Camera3dBundle {
+        transform: Transform::from_xyz(0.0, 6., 12.0).looking_at(Vec3::new(0., 1., 0.), Vec3::Y),
+        ..default()
+    });
 }
