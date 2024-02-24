@@ -1,9 +1,6 @@
 use openai_api_rust::chat::*;
 use openai_api_rust::*;
-
-use entity::SelfDescribe;
-
-use crate::entity;
+use uuid::Uuid;
 
 pub struct Completer {
     pub client: OpenAI,
@@ -24,31 +21,60 @@ impl std::fmt::Display for AiError {
 
 pub type CompletionQuery = ChatBody;
 
-pub fn query<Q, T: SelfDescribe<Input = Q> + Default>(input: &Q) -> CompletionQuery {
-    let t = T::default();
-    let message = t.describe(input);
+#[derive(Clone, Debug)]
+pub struct Conversation {
+    pub messages: Vec<Message>,
+}
 
-    ChatBody {
-        model: "gpt-3.5-turbo".to_string(),
-        max_tokens: None,
-        temperature: Some(0.3_f32),
-        top_p: None,
-        n: None,
-        stream: Some(false),
-        stop: None,
-        presence_penalty: None,
-        frequency_penalty: None,
-        logit_bias: None,
-        user: None,
-        messages: vec![Message {
+impl Default for Conversation {
+    fn default() -> Self {
+        Conversation::new()
+    }
+}
+
+impl Conversation {
+    pub fn new() -> Self {
+        let initiating_message = Message {
             role: Role::User,
-            content: message,
-        }],
+            content: "You are Hamish the sentient skeleton, you're generally relatively grumpy and are short with people who try to interrupt your patrol. Keep your response terse".to_string(),
+        };
+
+        Self {
+            messages: vec![initiating_message],
+        }
+    }
+
+    pub fn next(&mut self, message: String) {
+        let new_message = Message {
+            role: Role::User,
+            content: message.to_string(),
+        };
+        self.messages.push(new_message);
+    }
+}
+
+impl From<Conversation> for CompletionQuery {
+    fn from(val: Conversation) -> Self {
+        ChatBody {
+            model: "gpt-3.5-turbo".to_string(),
+            max_tokens: None,
+            temperature: Some(0.3_f32),
+            top_p: None,
+            n: None,
+            stream: Some(false),
+            stop: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            logit_bias: None,
+            user: None,
+            messages: val.messages,
+        }
     }
 }
 
 impl Completer {
-    pub fn complete(&self, body: CompletionQuery) -> Result<String, AiError> {
+    pub fn complete(&self, query: (Uuid, CompletionQuery)) -> Result<String, AiError> {
+        let body = query.1;
         let result = self
             .client
             .chat_completion_create(&body)
