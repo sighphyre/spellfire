@@ -12,13 +12,14 @@ use agent::{
 
 use bevy::prelude::*;
 use bevy::window::WindowMode;
+use bevy_ecs_tilemap::TilemapPlugin;
 use oracle::{read_oracle, start_oracle, CompletionCallback, Oracle, OracleReaderConfig};
 use spell::{
-    animate_blob, create_spell, new_matter_blob_bundle, update_spell, MatterBlobBundleBundle, Spell,
+    animate_blob, create_spell, new_matter_blob_bundle, update_spell, MatterBlobBundleBundle,
 };
 use std::sync::mpsc::Sender;
 use std::time::Duration;
-use terrain::TerrainGenerator;
+use terrain::{TiledMap, TiledMapBundle, TiledMapPlugin};
 use uuid::Uuid;
 
 use crate::generator::CompletionQuery;
@@ -291,25 +292,16 @@ fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut game: ResMut<Game>,
-    mut texture_assets: ResMut<Assets<TextureAtlas>>,
+    texture_assets: ResMut<Assets<TextureAtlas>>,
 ) {
     commands.spawn(Camera2dBundle::default());
 
-    let terrain_handle = asset_server.load("map.png");
-    let terrain_atlas = TextureAtlas::from_grid(
-        terrain_handle.clone(),
-        Vec2::new(64.0, 32.0),
-        16,
-        2,
-        None,
-        None,
-    );
-    let terrain_atlas_handle = texture_assets.add(terrain_atlas);
-    let terrain_gen = TerrainGenerator::new(10, 10, terrain_atlas_handle.clone());
+    let map_handle: Handle<TiledMap> = asset_server.load("test.tmx");
 
-    for tile in terrain_gen {
-        commands.spawn(tile);
-    }
+    commands.spawn(TiledMapBundle {
+        tiled_map: map_handle,
+        ..Default::default()
+    });
 
     let character_handle = asset_server.load("skeleton_0.png");
     let fire_handle = asset_server.load("fireball.png");
@@ -392,5 +384,7 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest()),
         )
+        .add_plugins(TilemapPlugin)
+        .add_plugins(TiledMapPlugin)
         .run();
 }
