@@ -3,6 +3,7 @@ mod generator;
 mod oracle;
 mod spell;
 mod terrain;
+mod camera;
 
 use agent::human::{new_human_agent_bundle, HumanAgentBundle, HumanController};
 use agent::npc::{new_ai_agent_bundle, tick_ai, AiAgentBundle};
@@ -13,6 +14,7 @@ use agent::{
 use bevy::prelude::*;
 use bevy::window::WindowMode;
 use bevy_ecs_tilemap::TilemapPlugin;
+use camera::move_camera;
 use oracle::{read_oracle, start_oracle, CompletionCallback, Oracle, OracleReaderConfig};
 use spell::{
     animate_blob, create_spell, new_matter_blob_bundle, update_spell, MatterBlobBundleBundle,
@@ -294,7 +296,7 @@ fn setup(
     mut game: ResMut<Game>,
     texture_assets: ResMut<Assets<TextureAtlas>>,
 ) {
-    commands.spawn(Camera2dBundle::default());
+    commands.spawn(camera::spawn_camera());
 
     let map_handle: Handle<TiledMap> = asset_server.load("test.tmx");
 
@@ -369,6 +371,7 @@ fn main() {
                 tick_ai,
                 (text_input, control_player, toggle_text_input),
                 handle_mouse,
+                move_camera,
                 animate_blob,
             ),
         )
